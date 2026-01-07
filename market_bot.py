@@ -51,17 +51,14 @@ def get_market_data():
         print(f"數據抓取錯誤: {e}")
         return None
 
-# --- 生成報告 (含自動降級機制) ---
+# --- 生成報告 (鎖定最穩定模型) ---
 def generate_ai_report(data, news_text):
     
-    # 定義模型優先順序：先試強的，失敗就換免費的
-    # 注意：gemini-1.5-flash 通常有最好的免費額度
-    model_priority = [
-        "gemini-2.0-flash-exp", # 嘗試最新的實驗版 (通常免費且強)
-        "gemini-1.5-pro",       # 嘗試 Pro (可能有額度限制)
-        "gemini-1.5-flash",     # 這是最穩的免費版保底
-        "gemini-pro"            # 舊版保底
-    ]
+    # 這裡我們強制使用 gemini-1.5-flash
+    # 這是目前免費額度最寬裕的模型，最不容易報錯
+    target_model = "gemini-1.5-flash"
+    
+    print(f"🤖 正在嘗試使用模型: {target_model} ...")
     
     prompt = f"""
     你是一位華爾街資深投資策略師。請根據以下數據與新聞，用「繁體中文」寫一份深度市場分析日報。
@@ -88,25 +85,15 @@ def generate_ai_report(data, news_text):
     請直接輸出 Markdown 格式。
     """
 
-    # --- 迴圈嘗試模型 ---
-    for model_name in model_priority:
-        try:
-            print(f"🤖 嘗試使用模型: {model_name} ...")
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt)
-            
-            # 如果成功，加上使用的是哪個模型的註記，並回傳
-            return f"{response.text}\n\n_(Analysis by {model_name})_"
-            
-        except Exception as e:
-            # 如果失敗 (例如 429 Quota Exceeded)，印出錯誤但不要崩潰，繼續試下一個
-            print(f"⚠️ 模型 {model_name} 失敗: {e}")
-            print("🔄 切換至下一個備援模型...")
-            time.sleep(1) # 稍微休息一下避免請求太快
-            continue
-            
-    # 如果全部都失敗
-    return "❌ 所有 AI 模型皆忙碌或額度不足，請稍後再試。"
+    try:
+        model = genai.GenerativeModel(target_model)
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        # 如果失敗，回傳詳細錯誤訊息給 Bot，方便我們除錯
+        error_msg = f"⚠️ 模型調用失敗: {str(e)}"
+        print(error_msg)
+        return error_msg
 
 # --- 主程式 ---
 if __name__ == "__main__":
@@ -121,13 +108,13 @@ if __name__ == "__main__":
             
             if m_data:
                 news = get_financial_news()
-                # 這裡會自動處理重試邏輯
+                # 呼叫報告生成
                 report = generate_ai_report(m_data, news)
                 
                 url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
                 payload = {'chat_id': CHAT_ID, 'text': report, 'parse_mode': 'Markdown'}
                 requests.post(url, data=payload)
-                print("✅ 報告發送成功")
+                print("✅ 執行結束")
             else:
                 print("⚠️ 數據抓取為空")
         except Exception as e:
@@ -136,4 +123,4 @@ if __name__ == "__main__":
             requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", 
                         data={'chat_id': CHAT_ID, 'text': err_msg})
     else:
-        print("⚠️ 缺少環境變數，請檢查 GitHub Secrets")
+        print("⚠️ 缺少環境變數")
