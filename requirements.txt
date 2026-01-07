@@ -1,0 +1,6 @@
+yfinance
+google-generativeai
+requests
+pandas
+feedparser
+python-telegram-bot
