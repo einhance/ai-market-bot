@@ -12,7 +12,7 @@ GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 
 # 設定 Gemini
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-pro')
 
 # --- 2. 抓取 Google 財經新聞 (RSS) ---
 def get_financial_news():
