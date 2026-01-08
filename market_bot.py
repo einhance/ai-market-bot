@@ -239,6 +239,7 @@ def generate_ai_report(data, news_text):
             
     return f"❌ 所有模型嘗試失敗。錯誤: {last_error}"
 
+# --- 主程式 (GitHub Actions 進入點) ---
 if __name__ == "__main__":
     TG_TOKEN = os.environ.get('TELEGRAM_TOKEN')
     CHAT_ID = os.environ.get('CHAT_ID')
@@ -248,16 +249,44 @@ if __name__ == "__main__":
         try:
             configure_genai(API_KEY)
             m_data = get_market_data()
+            
             if m_data:
                 news = get_financial_news()
                 report = generate_ai_report(m_data, news)
+                
+                # --- 發送 Telegram (增強版：失敗自動切換純文字) ---
                 url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
+                
+                # 第一次嘗試：Markdown 模式 (為了漂亮的表格)
                 payload = {'chat_id': CHAT_ID, 'text': report, 'parse_mode': 'Markdown'}
-                requests.post(url, data=payload)
-                print("✅ 報告發送成功")
+                print("📤 正在發送 Telegram (Markdown 模式)...")
+                response = requests.post(url, data=payload)
+                
+                if response.status_code == 200:
+                    print("✅ 報告發送成功！")
+                else:
+                    # 如果失敗，印出原因並嘗試純文字
+                    print(f"⚠️ Markdown 發送失敗，Telegram 回應: {response.text}")
+                    print("🔄 正在嘗試改用「純文字模式」重發...")
+                    
+                    payload['parse_mode'] = '' # 移除 parse_mode，使用預設純文字
+                    response_retry = requests.post(url, data=payload)
+                    
+                    if response_retry.status_code == 200:
+                        print("✅ 純文字報告補寄成功！(請檢查 AI 輸出的特殊符號是否干擾了 Markdown)")
+                    else:
+                        print(f"❌ 純文字也發送失敗: {response_retry.text}")
+
             else:
-                print("⚠️ 數據抓取為空")
+                print("⚠️ [GitHub] 數據抓取為空")
         except Exception as e:
-            print(f"❌ 執行錯誤: {e}")
+            err_msg = f"❌ [GitHub] 執行錯誤: {e}"
+            print(err_msg)
+            # 嘗試發送錯誤訊息給自己
+            try:
+                requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", 
+                            data={'chat_id': CHAT_ID, 'text': err_msg})
+            except:
+                pass
     else:
         print("⚠️ 缺少環境變數")
