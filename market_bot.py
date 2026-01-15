@@ -50,90 +50,84 @@ def get_financial_news():
         print(f"❌ 新聞抓取系統故障: {e}")
         return "新聞抓取失敗"
 
-from bs4 import BeautifulSoup
-from datetime import datetime
-import requests
-
-def get_aaii_sentiment(html_content=None):
+# --- 抓 AAII 情緒 (修復版) ---
+def get_aaii_sentiment():
     """
-    Parses AAII sentiment from provided HTML content or fetches it if None.
-    Returns a formatted string with the latest sentiment data.
+    Fetches and parses AAII sentiment from the live website.
+    Returns a tuple: (Formatted String, Source Name) or (None, None) if failed.
     """
+    url = "https://www.aaii.com/sentimentsurvey"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+    }
     
-    # If no content provided, you might want to fetch it (logic optional based on your setup)
-    if not html_content:
-        # headers = {'User-Agent': 'Mozilla/5.0...'}
-        # response = requests.get("https://www.aaii.com/sentimentsurvey", headers=headers)
-        # html_content = response.text
-        return "Error: No HTML content provided."
-
-    soup = BeautifulSoup(html_content, 'html.parser')
-
-    # Find the results section
-    results_section = soup.find('section', class_='results')
-    if not results_section:
-        return "Error: Could not find results section."
-
-    # Loop through 'weekending' blocks to find the first valid data row
-    # (The first row is usually headers, so we look for the first one with a valid date)
-    rows = results_section.find_all('div', class_='weekending')
-
-    for row in rows:
-        date_div = row.find('div', class_='date')
-        if not date_div:
-            continue
-        
-        date_text = date_div.get_text(strip=True)
-        
-        # Skip header rows or historical summary rows
-        if any(x in date_text for x in ["Week Ending", "Historical", "High", "Low"]):
-            continue
-
-        try:
-            # Parse date (Input format: 1/14/2026)
-            date_obj = datetime.strptime(date_text, "%m/%d/%Y")
-            formatted_date = date_obj.strftime("%Y/%m/%d")
-
-            # Extract percentages
-            # Structure: <div class="bar bullish" style="...">49.5%</div>
-            bull_text = row.find('div', class_='bullish').get_text(strip=True).replace('%', '')
-            neutral_text = row.find('div', class_='neutral').get_text(strip=True).replace('%', '')
-            bear_text = row.find('div', class_='bearish').get_text(strip=True).replace('%', '')
-
-            # Convert to floats for calculation
-            bull_val = float(bull_text)
-            bear_val = float(bear_text)
+    print("🕵️ 抓取 AAII 情緒數據...")
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code != 200:
+            print(f"❌ AAII 連線失敗: {response.status_code}")
+            return None, None
             
-            # Calculate Spread
-            spread = bull_val - bear_val
-            spread_str = f"+{spread:.1f}" if spread > 0 else f"{spread:.1f}"
+        soup = BeautifulSoup(response.text, 'html.parser')
 
-            # Final Formatted String
-            # Format: Bull:49.5% Neutral: 22.3%  Bear: 28.2%. Spread: +21.3%  (2026/01/14)
-            output = (
-                f"Bull:{bull_text}% "
-                f"Neutral: {neutral_text}%  "
-                f"Bear: {bear_text}%. "
-                f"Spread: {spread_str}%  "
-                f"({formatted_date})"
-            )
-            return output
+        # Find the results section
+        results_section = soup.find('section', class_='results')
+        if not results_section:
+            return None, None
 
-        except (ValueError, AttributeError) as e:
-            # If parsing fails for this row, try the next one
-            continue
+        # Loop through 'weekending' blocks
+        rows = results_section.find_all('div', class_='weekending')
 
-    return "Error: Could not extract sentiment data."
+        for row in rows:
+            date_div = row.find('div', class_='date')
+            if not date_div:
+                continue
+            
+            date_text = date_div.get_text(strip=True)
+            
+            # Skip header rows
+            if any(x in date_text for x in ["Week Ending", "Historical", "High", "Low"]):
+                continue
 
-# --- Usage Example ---
+            try:
+                # Parse date (Input format: 1/14/2026)
+                date_obj = datetime.datetime.strptime(date_text, "%m/%d/%Y")
+                formatted_date = date_obj.strftime("%Y/%m/%d")
 
-# Paste the raw HTML you provided into a variable or load from file
-# with open("aaii_source.html", "r", encoding="utf-8") as f:
-#     html_source = f.read()
+                # Extract percentages
+                bull_text = row.find('div', class_='bullish').get_text(strip=True).replace('%', '')
+                neutral_text = row.find('div', class_='neutral').get_text(strip=True).replace('%', '')
+                bear_text = row.find('div', class_='bearish').get_text(strip=True).replace('%', '')
 
-# For testing, you can pass the HTML string directly (omitted here for brevity)
-# result = get_aaii_sentiment(html_source)
-# print(result)
+                # Convert to floats for calculation
+                bull_val = float(bull_text)
+                bear_val = float(bear_text)
+                
+                # Calculate Spread
+                spread = bull_val - bear_val
+                spread_str = f"+{spread:.1f}" if spread > 0 else f"{spread:.1f}"
+
+                # Final Formatted String
+                output = (
+                    f"Bull:{bull_text}% "
+                    f"Neutral: {neutral_text}%  "
+                    f"Bear: {bear_text}%. "
+                    f"Spread: {spread_str}%  "
+                    f"({formatted_date})"
+                )
+                print(f"✅ AAII 抓取成功: {output}")
+                # Important: Return a TUPLE to match get_market_data expectation
+                return output, "AAII 官網"
+
+            except (ValueError, AttributeError) as e:
+                continue
+
+        return None, None
+        
+    except Exception as e:
+        print(f"❌ AAII 抓取錯誤: {e}")
+        return None, None
 
 # --- 抓 CNN 恐懼貪婪指數 ---
 def get_cnn_fear_greed():
@@ -170,8 +164,9 @@ def get_market_data():
         else:
             df_calc = df
             
-        # 1. 外部真實數據
-        aaii_str, aaii_src = get_aaii_sentiment()
+        # 1. 外部真實數據 (AAII & CNN)
+        # This line was crashing before because get_aaii_sentiment only returned 1 value
+        aaii_str, aaii_src = get_aaii_sentiment() 
         cnn_score = get_cnn_fear_greed()
         
         # 2. 替代指標
@@ -188,7 +183,7 @@ def get_market_data():
         # 整合數據 - AAII
         if aaii_str is not None:
             aaii_display = aaii_str
-            aaii_source = "真實數據"
+            aaii_source = aaii_src
         else:
             aaii_display = f"RSI:{current_rsi:.1f} (模擬數值)"
             aaii_source = "RSI替代"
@@ -227,6 +222,8 @@ def get_market_data():
         }
     except Exception as e:
         print(f"❌ 數據錯誤: {e}")
+        import traceback
+        traceback.print_exc() # Print full error to help debug
         return None
 
 # --- 生成報告 ---
@@ -271,13 +268,13 @@ def generate_ai_report(data, news_text):
     ## 1. 最新市場體檢報告
     (請建立 Markdown Code Block 表格，**AAII 數值較長，請確保表格寬度足夠**，不要換行)
     ```text
-    指標            數值                               歷史位階/狀態       解讀
+    指標            數值                                      歷史位階/狀態       解讀
     --------------------------------------------------------------------------------------
     AAII 散戶情緒   {data['aaii_display']}   (請判斷)          (解讀散戶多空配置)
-    VIX 恐慌指數    {data['vix']:.2f}                       (請判斷)          (解讀避險需求)
-    CNN 恐懼貪婪    {data['cnn_display']}                       (請判斷)          (解讀市場心理)
-    市場廣度        {data['breadth']:.3f}                       (請判斷)          (解讀漲勢健康度)
-    Fed Rate (利率) {data['fed_rate']:.2f}%                       (請判斷)          (解讀資金成本)
+    VIX 恐慌指數    {data['vix']:.2f}                        (請判斷)          (解讀避險需求)
+    CNN 恐懼貪婪    {data['cnn_display']}                        (請判斷)          (解讀市場心理)
+    市場廣度        {data['breadth']:.3f}                        (請判斷)          (解讀漲勢健康度)
+    Fed Rate (利率) {data['fed_rate']:.2f}%                        (請判斷)          (解讀資金成本)
     ```
 
     ## 2. 📰 當日重大財經新聞
