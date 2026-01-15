@@ -50,63 +50,90 @@ def get_financial_news():
         print(f"❌ 新聞抓取系統故障: {e}")
         return "新聞抓取失敗"
 
-# --- 【精準狙擊版】抓 AAII 完整數據 ---
-def get_aaii_sentiment():
-    print("🕵️ 抓取 AAII 數據 (精準 Class 定位)...")
-    url = "https://www.aaii.com/sentimentsurvey"
+from bs4 import BeautifulSoup
+from datetime import datetime
+import requests
+
+def get_aaii_sentiment(html_content=None):
+    """
+    Parses AAII sentiment from provided HTML content or fetches it if None.
+    Returns a formatted string with the latest sentiment data.
+    """
     
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://www.google.com/"
-    }
-    
-    try:
-        r = requests.get(url, headers=headers, timeout=15)
-        if r.status_code != 200:
-            print(f"⚠️ AAII 連線被拒 (Status: {r.status_code})")
-            return None, None
+    # If no content provided, you might want to fetch it (logic optional based on your setup)
+    if not html_content:
+        # headers = {'User-Agent': 'Mozilla/5.0...'}
+        # response = requests.get("https://www.aaii.com/sentimentsurvey", headers=headers)
+        # html_content = response.text
+        return "Error: No HTML content provided."
 
-        soup = BeautifulSoup(r.text, 'html.parser')
+    soup = BeautifulSoup(html_content, 'html.parser')
+
+    # Find the results section
+    results_section = soup.find('section', class_='results')
+    if not results_section:
+        return "Error: Could not find results section."
+
+    # Loop through 'weekending' blocks to find the first valid data row
+    # (The first row is usually headers, so we look for the first one with a valid date)
+    rows = results_section.find_all('div', class_='weekending')
+
+    for row in rows:
+        date_div = row.find('div', class_='date')
+        if not date_div:
+            continue
         
-        # 根據你提供的 HTML 結構，我們直接鎖定特定的 class
-        # <div class="bar bullish" style="width:49.5%">49.5%</div>
+        date_text = date_div.get_text(strip=True)
         
-        bull_div = soup.find("div", class_="bar bullish")
-        neut_div = soup.find("div", class_="bar neutral")
-        bear_div = soup.find("div", class_="bar bearish")
-        date_div = soup.find("div", class_="date") # <div class="date">1/14/2026</div>
+        # Skip header rows or historical summary rows
+        if any(x in date_text for x in ["Week Ending", "Historical", "High", "Low"]):
+            continue
 
-        if bull_div and neut_div and bear_div:
-            # 使用 .get_text(strip=True) 確保只抓文字內容，不管 style
-            bull = bull_div.get_text(strip=True).replace('%', '')
-            neut = neut_div.get_text(strip=True).replace('%', '')
-            bear = bear_div.get_text(strip=True).replace('%', '')
-            
-            # 抓取日期
-            date_str = date_div.get_text(strip=True) if date_div else "N/A"
-            
-            # 格式化日期
-            try:
-                dt = pd.to_datetime(date_str)
-                short_date = dt.strftime("%m/%d")
-            except:
-                short_date = date_str
+        try:
+            # Parse date (Input format: 1/14/2026)
+            date_obj = datetime.strptime(date_text, "%m/%d/%Y")
+            formatted_date = date_obj.strftime("%Y/%m/%d")
 
-            # 驗算一下是否總和約為 100 (避免抓到空值)
-            try:
-                if float(bull) + float(neut) + float(bear) > 99:
-                    full_str = f"Bull:{bull}% Neut:{neut}% Bear:{bear}% ({short_date})"
-                    print(f"✅ AAII 抓取成功: {full_str}")
-                    return full_str, "真實數據"
-            except:
-                pass
+            # Extract percentages
+            # Structure: <div class="bar bullish" style="...">49.5%</div>
+            bull_text = row.find('div', class_='bullish').get_text(strip=True).replace('%', '')
+            neutral_text = row.find('div', class_='neutral').get_text(strip=True).replace('%', '')
+            bear_text = row.find('div', class_='bearish').get_text(strip=True).replace('%', '')
 
-        print("⚠️ AAII 頁面解析完成，但未找到對應 class (可能是網頁改版)")
-        return None, None
+            # Convert to floats for calculation
+            bull_val = float(bull_text)
+            bear_val = float(bear_text)
             
-    except Exception as e:
-        print(f"⚠️ AAII 處理錯誤: {e}")
-        return None, None
+            # Calculate Spread
+            spread = bull_val - bear_val
+            spread_str = f"+{spread:.1f}" if spread > 0 else f"{spread:.1f}"
+
+            # Final Formatted String
+            # Format: Bull:49.5% Neutral: 22.3%  Bear: 28.2%. Spread: +21.3%  (2026/01/14)
+            output = (
+                f"Bull:{bull_text}% "
+                f"Neutral: {neutral_text}%  "
+                f"Bear: {bear_text}%. "
+                f"Spread: {spread_str}%  "
+                f"({formatted_date})"
+            )
+            return output
+
+        except (ValueError, AttributeError) as e:
+            # If parsing fails for this row, try the next one
+            continue
+
+    return "Error: Could not extract sentiment data."
+
+# --- Usage Example ---
+
+# Paste the raw HTML you provided into a variable or load from file
+# with open("aaii_source.html", "r", encoding="utf-8") as f:
+#     html_source = f.read()
+
+# For testing, you can pass the HTML string directly (omitted here for brevity)
+# result = get_aaii_sentiment(html_source)
+# print(result)
 
 # --- 抓 CNN 恐懼貪婪指數 ---
 def get_cnn_fear_greed():
