@@ -50,56 +50,70 @@ def get_financial_news():
         print(f"❌ 新聞抓取系統故障: {e}")
         return "新聞抓取失敗"
 
-# --- 【升級版】抓 AAII 完整數據 (Bull/Neut/Bear) ---
+# --- 【強效修復版】抓 AAII 完整數據 ---
 def get_aaii_sentiment():
     print("🕵️ 抓取 AAII 完整情緒數據...")
+    url = "https://www.aaii.com/sentimentsurvey"
+    
+    # 增強偽裝：加入更多 Header 資訊，讓伺服器覺得這是真的 Chrome
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.google.com/"
+    }
+    
     try:
-        url = "https://www.aaii.com/sentimentsurvey"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        r = requests.get(url, headers=headers, timeout=10)
+        r = requests.get(url, headers=headers, timeout=15)
         
-        if r.status_code == 200:
-            soup = BeautifulSoup(r.text, 'html.parser')
-            # 尋找網頁中的數據表格
-            # AAII 網頁結構通常把數據放在一個表格裡，我們嘗試找有百分比符號的行
-            # 簡單暴力的解法：找所有表格列 (tr)，分析裡面的文字
-            
-            rows = soup.find_all('tr')
-            for row in rows:
-                cols = row.find_all('td')
-                # AAII 表格的一行通常有 4 個主要欄位: Date, Bullish, Neutral, Bearish
-                # 例如: Reported Date | Bullish | Neutral | Bearish
-                if len(cols) >= 4:
-                    row_text = [c.get_text(strip=True) for c in cols]
-                    
-                    # 檢查第一欄是不是日期格式 (含有 202x)
-                    if "202" in row_text[0] and "%" in row_text[1]:
-                        date_str = row_text[0]
-                        bull = row_text[1].replace('%', '')
-                        neut = row_text[2].replace('%', '')
-                        bear = row_text[3].replace('%', '')
+        if r.status_code != 200:
+            print(f"⚠️ AAII 連線被拒 (Status: {r.status_code})")
+            return None, None
+
+        soup = BeautifulSoup(r.text, 'html.parser')
+        
+        # 尋找所有表格列 (tr)
+        rows = soup.find_all('tr')
+        
+        for row in rows:
+            cols = row.find_all('td')
+            # 確保這一行至少有 4 個欄位 (Date, Bull, Neut, Bear)
+            if len(cols) >= 4:
+                row_text = [c.get_text(strip=True) for c in cols]
+                
+                # 欄位 0: 日期, 欄位 1: Bullish %
+                date_str = row_text[0]
+                bull_str = row_text[1]
+                neut_str = row_text[2]
+                bear_str = row_text[3]
+
+                # 寬鬆判斷邏輯：
+                # 1. 第二欄必須包含 "%" 符號
+                # 2. 第一欄必須能被 pandas 轉為日期
+                if "%" in bull_str:
+                    try:
+                        # 嘗試解析日期 (自動處理 1/15/26 或 2026-01-15 等各種格式)
+                        dt = pd.to_datetime(date_str)
                         
-                        # 格式化日期
-                        try:
-                            dt = pd.to_datetime(date_str)
-                            short_date = dt.strftime("%m/%d")
-                        except:
-                            short_date = date_str
-                            
-                        # 組合成完整字串
-                        # 格式: Bull:49.5% Neut:22.3% Bear:28.2% (01/14)
+                        # 抓到了！開始清理數據
+                        short_date = dt.strftime("%m/%d")
+                        bull = bull_str.replace('%', '')
+                        neut = neut_str.replace('%', '')
+                        bear = bear_str.replace('%', '')
+                        
                         full_str = f"Bull:{bull}% Neut:{neut}% Bear:{bear}% ({short_date})"
-                        print(f"✅ AAII 成功: {full_str}")
+                        print(f"✅ AAII 抓取成功: {full_str}")
                         return full_str, "真實數據"
                         
-            print("⚠️ 未在 AAII 頁面找到符合格式的表格")
-            return None, None
-            
+                    except Exception as e:
+                        # 這一行不是數據列 (可能是標題列)，跳過
+                        continue
+        
+        print("⚠️ AAII 頁面解析完成，但未發現有效數據列 (可能是網頁改版或無權限)")
         return None, None
+            
     except Exception as e:
-        print(f"⚠️ AAII 抓取錯誤: {e}")
+        print(f"⚠️ AAII 系統錯誤: {e}")
         return None, None
 
 # --- 抓 CNN 恐懼貪婪指數 ---
