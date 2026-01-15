@@ -50,14 +50,13 @@ def get_financial_news():
         print(f"❌ 新聞抓取系統故障: {e}")
         return "新聞抓取失敗"
 
-# --- 【精準定位版】抓 AAII 完整數據 ---
+# --- 【精準狙擊版】抓 AAII 完整數據 ---
 def get_aaii_sentiment():
-    print("🕵️ 正在抓取 AAII 數據 (精準定位模式)...")
+    print("🕵️ 抓取 AAII 數據 (精準 Class 定位)...")
     url = "https://www.aaii.com/sentimentsurvey"
     
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Referer": "https://www.google.com/"
     }
     
@@ -67,57 +66,42 @@ def get_aaii_sentiment():
             print(f"⚠️ AAII 連線被拒 (Status: {r.status_code})")
             return None, None
 
-        # 1. 先用 BeautifulSoup 剝除所有 HTML 標籤，只留純文字
         soup = BeautifulSoup(r.text, 'html.parser')
         
-        # 移除 script 和 style 區塊，避免抓到 CSS 裡的 50.0%
-        for script in soup(["script", "style"]):
-            script.extract()    
-
-        # 取得乾淨的純文字內容
-        clean_text = soup.get_text(separator=' ', strip=True)
+        # 根據你提供的 HTML 結構，我們直接鎖定特定的 class
+        # <div class="bar bullish" style="width:49.5%">49.5%</div>
         
-        # 2. 在純文字中尋找關鍵字
-        # AAII 網頁純文字通常會顯示： "Sentiment Survey ... Reported Date: 01/14/26 ... Bullish: 45.5% Neutral: 30.2% Bearish: 24.3%"
-        # 我們先找日期
-        
-        # 嘗試找日期 (格式如 01/14/26 或 January 14, 2026)
-        date_match = re.search(r'(\d{1,2}/\d{1,2}/\d{2,4})', clean_text)
-        if not date_match:
-             date_match = re.search(r'([A-Za-z]+ \d{1,2}, \d{4})', clean_text)
-             
-        # 3. 尋找 sentiment 數值
-        # 尋找 "Bullish" 後面跟著的數字
-        bull_match = re.search(r'Bullish.*?(\d{1,2}\.\d)%', clean_text, re.IGNORECASE)
-        neut_match = re.search(r'Neutral.*?(\d{1,2}\.\d)%', clean_text, re.IGNORECASE)
-        bear_match = re.search(r'Bearish.*?(\d{1,2}\.\d)%', clean_text, re.IGNORECASE)
+        bull_div = soup.find("div", class_="bar bullish")
+        neut_div = soup.find("div", class_="bar neutral")
+        bear_div = soup.find("div", class_="bar bearish")
+        date_div = soup.find("div", class_="date") # <div class="date">1/14/2026</div>
 
-        if bull_match and neut_match and bear_match:
-            bull = float(bull_match.group(1))
-            neut = float(neut_match.group(1))
-            bear = float(bear_match.group(1))
+        if bull_div and neut_div and bear_div:
+            # 使用 .get_text(strip=True) 確保只抓文字內容，不管 style
+            bull = bull_div.get_text(strip=True).replace('%', '')
+            neut = neut_div.get_text(strip=True).replace('%', '')
+            bear = bear_div.get_text(strip=True).replace('%', '')
             
-            # 【驗算機制】確保抓到的是真數據，不是亂碼
-            # 三者相加應該要接近 100% (允許誤差 1%)
-            total = bull + neut + bear
-            if 99.0 <= total <= 101.0:
-                # 抓取日期
-                date_str = date_match.group(1) if date_match else datetime.date.today().strftime("%m/%d")
-                
-                # 格式化日期
-                try:
-                    dt = pd.to_datetime(date_str)
-                    short_date = dt.strftime("%m/%d")
-                except:
-                    short_date = str(date_str).split(',')[0]
+            # 抓取日期
+            date_str = date_div.get_text(strip=True) if date_div else "N/A"
+            
+            # 格式化日期
+            try:
+                dt = pd.to_datetime(date_str)
+                short_date = dt.strftime("%m/%d")
+            except:
+                short_date = date_str
 
-                full_str = f"Bull:{bull}% Neut:{neut}% Bear:{bear}% ({short_date})"
-                print(f"✅ AAII 驗算成功: {full_str}")
-                return full_str, "真實數據"
-            else:
-                print(f"⚠️ AAII 數據驗算失敗 (總和 {total}%)，可能是抓錯欄位。")
-        
-        print("⚠️ 未在純文字中找到完整的 Sentiment 數據模式")
+            # 驗算一下是否總和約為 100 (避免抓到空值)
+            try:
+                if float(bull) + float(neut) + float(bear) > 99:
+                    full_str = f"Bull:{bull}% Neut:{neut}% Bear:{bear}% ({short_date})"
+                    print(f"✅ AAII 抓取成功: {full_str}")
+                    return full_str, "真實數據"
+            except:
+                pass
+
+        print("⚠️ AAII 頁面解析完成，但未找到對應 class (可能是網頁改版)")
         return None, None
             
     except Exception as e:
@@ -160,10 +144,10 @@ def get_market_data():
             df_calc = df
             
         # 1. 外部真實數據
-        aaii_str, aaii_src = get_aaii_sentiment() # 這裡會拿到完整字串
+        aaii_str, aaii_src = get_aaii_sentiment()
         cnn_score = get_cnn_fear_greed()
         
-        # 2. 替代指標 (作為備案)
+        # 2. 替代指標
         delta = df_calc['SPY'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -179,7 +163,6 @@ def get_market_data():
             aaii_display = aaii_str
             aaii_source = "真實數據"
         else:
-            # 如果抓不到，只顯示 RSI 模擬
             aaii_display = f"RSI:{current_rsi:.1f} (模擬數值)"
             aaii_source = "RSI替代"
 
@@ -210,7 +193,7 @@ def get_market_data():
             'qqq_chg': calc_change(latest['QQQ'], prev['QQQ']),
             'soxx_chg': calc_change(latest['SOXX'], prev['SOXX']),
             'breadth': breadth_ratio,
-            'aaii_display': aaii_display, # 這裡現在是長字串
+            'aaii_display': aaii_display,
             'aaii_src': aaii_source,
             'cnn_display': cnn_display,
             'cnn_src': cnn_src
@@ -239,7 +222,6 @@ def generate_ai_report(data, news_text):
         return 3
     all_models.sort(key=priority_sort)
     
-    # 注意：AAII 欄位變寬了，Prompt 裡的表格分隔線要拉長一點
     prompt = f"""
     你是一位華爾街量化分析師。請根據以下數據，製作一份「繁體中文」日報。
 
