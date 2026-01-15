@@ -50,11 +50,10 @@ def get_financial_news():
         print(f"❌ 新聞抓取系統故障: {e}")
         return "新聞抓取失敗"
 
-# --- 【暴力搜尋版】抓 AAII 完整數據 ---
+# --- 【精準定位版】抓 AAII 完整數據 ---
 def get_aaii_sentiment():
-    print("🕵️ 正在暴力搜尋 AAII 數據...")
-    # 備用來源列表 (如果有更多來源可在此加入)
-    urls = ["https://www.aaii.com/sentimentsurvey"]
+    print("🕵️ 正在抓取 AAII 數據 (精準定位模式)...")
+    url = "https://www.aaii.com/sentimentsurvey"
     
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -63,63 +62,66 @@ def get_aaii_sentiment():
     }
     
     try:
-        for url in urls:
-            r = requests.get(url, headers=headers, timeout=15)
-            if r.status_code != 200: continue
+        r = requests.get(url, headers=headers, timeout=15)
+        if r.status_code != 200:
+            print(f"⚠️ AAII 連線被拒 (Status: {r.status_code})")
+            return None, None
 
-            text = r.text
-            
-            # 策略：直接尋找 "Month Day, Year" 或是 "MM/DD/YY" 後面跟著三個百分比的模式
-            # AAII 網頁上的日期通常格式為: "January 14, 2026" 或 "1/14/26"
-            # 數據順序永遠是: Bullish -> Neutral -> Bearish
-            
-            # Regex 模式 1: 尋找 "Reported Date" 附近的數據
-            # 尋找像是: 45.5% ... 20.1% ... 34.4%
-            # 這會抓出網頁上所有看起來像 "數字%" 的東西
-            percentages = re.findall(r'(\d+\.\d+)%', text)
-            
-            # 尋找日期 (例如 January 15, 2026 或 01/15/26)
-            # AAII 標題通常會有 "Week Ending: January 14, 2026"
-            date_match = re.search(r'Week Ending:?\s*([A-Za-z]+ \d{1,2}, \d{4})', text)
-            
-            if not date_match:
-                # 備用：嘗試找表格裡的第一個日期格式
-                date_match = re.search(r'(\d{1,2}/\d{1,2}/\d{2,4})', text)
+        # 1. 先用 BeautifulSoup 剝除所有 HTML 標籤，只留純文字
+        soup = BeautifulSoup(r.text, 'html.parser')
+        
+        # 移除 script 和 style 區塊，避免抓到 CSS 裡的 50.0%
+        for script in soup(["script", "style"]):
+            script.extract()    
 
-            if date_match and len(percentages) >= 3:
-                date_str = date_match.group(1)
-                
-                # AAII 網頁最上方的三個百分比通常就是最新一週的 Bull/Neut/Bear
-                # 但有時候會有 "Historical Average" 插在前面
-                # 我們假設最新的數據在列表的前段
-                
-                # 為了保險，我們直接鎖定 "Sentiment Survey" 表格區域
-                # 先把 text 縮小範圍到 "Reported Date" 之後
-                if "Reported Date" in text:
-                    split_text = text.split("Reported Date")[1]
-                    percentages = re.findall(r'(\d+\.\d+)%', split_text)
-                
-                if len(percentages) >= 3:
-                    bull = percentages[0]
-                    neut = percentages[1]
-                    bear = percentages[2]
-                    
-                    # 格式化日期
-                    try:
-                        dt = pd.to_datetime(date_str)
-                        short_date = dt.strftime("%m/%d")
-                    except:
-                        short_date = date_str.split(',')[0] # 簡單處理
-                    
-                    full_str = f"Bull:{bull}% Neut:{neut}% Bear:{bear}% ({short_date})"
-                    print(f"✅ AAII 暴力搜尋成功: {full_str}")
-                    return full_str, "真實數據"
+        # 取得乾淨的純文字內容
+        clean_text = soup.get_text(separator=' ', strip=True)
+        
+        # 2. 在純文字中尋找關鍵字
+        # AAII 網頁純文字通常會顯示： "Sentiment Survey ... Reported Date: 01/14/26 ... Bullish: 45.5% Neutral: 30.2% Bearish: 24.3%"
+        # 我們先找日期
+        
+        # 嘗試找日期 (格式如 01/14/26 或 January 14, 2026)
+        date_match = re.search(r'(\d{1,2}/\d{1,2}/\d{2,4})', clean_text)
+        if not date_match:
+             date_match = re.search(r'([A-Za-z]+ \d{1,2}, \d{4})', clean_text)
+             
+        # 3. 尋找 sentiment 數值
+        # 尋找 "Bullish" 後面跟著的數字
+        bull_match = re.search(r'Bullish.*?(\d{1,2}\.\d)%', clean_text, re.IGNORECASE)
+        neut_match = re.search(r'Neutral.*?(\d{1,2}\.\d)%', clean_text, re.IGNORECASE)
+        bear_match = re.search(r'Bearish.*?(\d{1,2}\.\d)%', clean_text, re.IGNORECASE)
 
-        print("⚠️ 暴力搜尋失敗，網頁內容可能已加密或動態載入")
+        if bull_match and neut_match and bear_match:
+            bull = float(bull_match.group(1))
+            neut = float(neut_match.group(1))
+            bear = float(bear_match.group(1))
+            
+            # 【驗算機制】確保抓到的是真數據，不是亂碼
+            # 三者相加應該要接近 100% (允許誤差 1%)
+            total = bull + neut + bear
+            if 99.0 <= total <= 101.0:
+                # 抓取日期
+                date_str = date_match.group(1) if date_match else datetime.date.today().strftime("%m/%d")
+                
+                # 格式化日期
+                try:
+                    dt = pd.to_datetime(date_str)
+                    short_date = dt.strftime("%m/%d")
+                except:
+                    short_date = str(date_str).split(',')[0]
+
+                full_str = f"Bull:{bull}% Neut:{neut}% Bear:{bear}% ({short_date})"
+                print(f"✅ AAII 驗算成功: {full_str}")
+                return full_str, "真實數據"
+            else:
+                print(f"⚠️ AAII 數據驗算失敗 (總和 {total}%)，可能是抓錯欄位。")
+        
+        print("⚠️ 未在純文字中找到完整的 Sentiment 數據模式")
         return None, None
             
     except Exception as e:
-        print(f"⚠️ AAII 錯誤: {e}")
+        print(f"⚠️ AAII 處理錯誤: {e}")
         return None, None
 
 # --- 抓 CNN 恐懼貪婪指數 ---
