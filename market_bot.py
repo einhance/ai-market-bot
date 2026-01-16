@@ -50,83 +50,53 @@ def get_financial_news():
         print(f"❌ 新聞抓取系統故障: {e}")
         return "新聞抓取失敗"
 
-# --- 抓 AAII 情緒 (修復版) ---
+# --- 抓 AAII 完整數據 (日期嚴格過濾版) ---
 def get_aaii_sentiment():
-    """
-    Fetches and parses AAII sentiment from the live website.
-    Returns a tuple: (Formatted String, Source Name) or (None, None) if failed.
-    """
+    print("🕵️ 抓取 AAII 數據 (日期嚴格修復)...")
     url = "https://www.aaii.com/sentimentsurvey"
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Referer": "https://www.google.com/"
     }
-    
-    print("🕵️ 抓取 AAII 情緒數據...")
     try:
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code != 200:
-            print(f"❌ AAII 連線失敗: {response.status_code}")
-            return None, None
-            
-        soup = BeautifulSoup(response.text, 'html.parser')
+        r = requests.get(url, headers=headers, timeout=15)
+        if r.status_code != 200: return None, None
 
-        # Find the results section
-        results_section = soup.find('section', class_='results')
-        if not results_section:
-            return None, None
-
-        # Loop through 'weekending' blocks
-        rows = results_section.find_all('div', class_='weekending')
-
-        for row in rows:
-            date_div = row.find('div', class_='date')
-            if not date_div:
-                continue
-            
-            date_text = date_div.get_text(strip=True)
-            
-            # Skip header rows
-            if any(x in date_text for x in ["Week Ending", "Historical", "High", "Low"]):
-                continue
-
-            try:
-                # Parse date (Input format: 1/14/2026)
-                date_obj = datetime.datetime.strptime(date_text, "%m/%d/%Y")
-                formatted_date = date_obj.strftime("%Y/%m/%d")
-
-                # Extract percentages
-                bull_text = row.find('div', class_='bullish').get_text(strip=True).replace('%', '')
-                neutral_text = row.find('div', class_='neutral').get_text(strip=True).replace('%', '')
-                bear_text = row.find('div', class_='bearish').get_text(strip=True).replace('%', '')
-
-                # Convert to floats for calculation
-                bull_val = float(bull_text)
-                bear_val = float(bear_text)
-                
-                # Calculate Spread
-                spread = bull_val - bear_val
-                spread_str = f"+{spread:.1f}" if spread > 0 else f"{spread:.1f}"
-
-                # Final Formatted String
-                output = (
-                    f"Bull:{bull_text}% "
-                    f"Neutral: {neutral_text}%  "
-                    f"Bear: {bear_text}%. "
-                    f"Spread: {spread_str}%  "
-                    f"({formatted_date})"
-                )
-                print(f"✅ AAII 抓取成功: {output}")
-                # Important: Return a TUPLE to match get_market_data expectation
-                return output, "AAII 官網"
-
-            except (ValueError, AttributeError) as e:
-                continue
-
-        return None, None
+        soup = BeautifulSoup(r.text, 'html.parser')
+        for script in soup(["script", "style"]): script.extract()
+        clean_text = soup.get_text(separator=' ', strip=True)
         
+        months = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*"
+        date_pattern = rf"(\d{{1,2}}/\d{{1,2}}/\d{{2,4}}|{months}\s+\d{{1,2}},?\s+\d{{4}})"
+        date_match = re.search(date_pattern, clean_text, re.IGNORECASE)
+        
+        bull_match = re.search(r'Bullish.*?(\d{1,2}\.\d)%', clean_text, re.IGNORECASE)
+        neut_match = re.search(r'Neutral.*?(\d{1,2}\.\d)%', clean_text, re.IGNORECASE)
+        bear_match = re.search(r'Bearish.*?(\d{1,2}\.\d)%', clean_text, re.IGNORECASE)
+
+        if bull_match and neut_match and bear_match:
+            bull = float(bull_match.group(1))
+            neut = float(neut_match.group(1))
+            bear = float(bear_match.group(1))
+            
+            if 99.0 <= (bull + neut + bear) <= 101.0:
+                if date_match:
+                    raw_date = date_match.group(1)
+                    try:
+                        dt = pd.to_datetime(raw_date)
+                        short_date = dt.strftime("%m/%d")
+                    except:
+                        short_date = raw_date
+                else:
+                    short_date = datetime.date.today().strftime("%m/%d")
+
+                full_str = f"Bull:{bull}% Neut:{neut}% Bear:{bear}% ({short_date})"
+                print(f"✅ AAII 成功: {full_str}")
+                return full_str, "真實數據"
+        return None, None
     except Exception as e:
-        print(f"❌ AAII 抓取錯誤: {e}")
+        print(f"⚠️ AAII 錯誤: {e}")
         return None, None
 
 # --- 抓 CNN 恐懼貪婪指數 ---
@@ -144,8 +114,7 @@ def get_cnn_fear_greed():
             score = data['fear_and_greed']['score']
             return score
         return None
-    except:
-        return None
+    except: return None
 
 # --- 抓市場數據 ---
 def get_market_data():
@@ -164,12 +133,9 @@ def get_market_data():
         else:
             df_calc = df
             
-        # 1. 外部真實數據 (AAII & CNN)
-        # This line was crashing before because get_aaii_sentiment only returned 1 value
-        aaii_str, aaii_src = get_aaii_sentiment() 
+        aaii_str, aaii_src = get_aaii_sentiment()
         cnn_score = get_cnn_fear_greed()
         
-        # 2. 替代指標
         delta = df_calc['SPY'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -180,15 +146,13 @@ def get_market_data():
         ma_20 = df_calc['SPY'].rolling(window=20).mean().iloc[-1]
         bias = ((latest['SPY'] - ma_20) / ma_20) * 100
         
-        # 整合數據 - AAII
         if aaii_str is not None:
             aaii_display = aaii_str
-            aaii_source = aaii_src
+            aaii_source = "真實數據"
         else:
             aaii_display = f"RSI:{current_rsi:.1f} (模擬數值)"
             aaii_source = "RSI替代"
 
-        # 整合數據 - CNN
         if cnn_score is not None:
             cnn_display = f"{cnn_score:.0f}"
             cnn_src = "真實數據"
@@ -222,8 +186,6 @@ def get_market_data():
         }
     except Exception as e:
         print(f"❌ 數據錯誤: {e}")
-        import traceback
-        traceback.print_exc() # Print full error to help debug
         return None
 
 # --- 生成報告 ---
@@ -266,15 +228,15 @@ def generate_ai_report(data, news_text):
     # 🦅 {data['date']} 全方位投資策略分析
 
     ## 1. 最新市場體檢報告
-    (請建立 Markdown Code Block 表格，**AAII 數值較長，請確保表格寬度足夠**，不要換行)
-    ```
-    指標            數值                                      歷史位階/狀態       解讀
+    (請建立 Markdown Code Block 表格，**AAII 數值較長，請確保表格寬度足夠**)
+    ```text
+    指標            數值                               歷史位階/狀態       解讀
     --------------------------------------------------------------------------------------
     AAII 散戶情緒   {data['aaii_display']}   (請判斷)          (解讀散戶多空配置)
-    VIX 恐慌指數    {data['vix']:.2f}                        (請判斷)          (解讀避險需求)
-    CNN 恐懼貪婪    {data['cnn_display']}                        (請判斷)          (解讀市場心理)
-    市場廣度        {data['breadth']:.3f}                        (請判斷)          (解讀漲勢健康度)
-    Fed Rate (利率) {data['fed_rate']:.2f}%                        (請判斷)          (解讀資金成本)
+    VIX 恐慌指數    {data['vix']:.2f}                       (請判斷)          (解讀避險需求)
+    CNN 恐懼貪婪    {data['cnn_display']}                       (請判斷)          (解讀市場心理)
+    市場廣度        {data['breadth']:.3f}                       (請判斷)          (解讀漲勢健康度)
+    Fed Rate (利率) {data['fed_rate']:.2f}%                       (請判斷)          (解讀資金成本)
     ```
 
     ## 2. 📰 當日重大財經新聞
@@ -307,35 +269,48 @@ def generate_ai_report(data, news_text):
             last_error = str(e)
             time.sleep(1)
             continue
-            
     return f"❌ 所有模型嘗試失敗。錯誤: {last_error}"
 
-# --- 主程式 ---
+# --- 主程式 (支援多群組廣播) ---
 if __name__ == "__main__":
     TG_TOKEN = os.environ.get('TELEGRAM_TOKEN')
-    CHAT_ID = os.environ.get('CHAT_ID')
+    CHAT_ID_ENV = os.environ.get('CHAT_ID') # 取得原始字串
     API_KEY = os.environ.get('GEMINI_API_KEY')
     
-    if TG_TOKEN and CHAT_ID and API_KEY:
+    if TG_TOKEN and CHAT_ID_ENV and API_KEY:
         try:
+            # 1. 解析群組 ID (支援逗號分隔)
+            # 例如: "-100123,-100456" -> ['-100123', '-100456']
+            chat_ids = [cid.strip() for cid in CHAT_ID_ENV.split(',') if cid.strip()]
+            print(f"📢 準備發送報告給 {len(chat_ids)} 個群組: {chat_ids}")
+
             configure_genai(API_KEY)
             m_data = get_market_data()
+            
             if m_data:
                 news = get_financial_news()
+                # 報告只生成一次，不用重複浪費 AI 額度
                 report = generate_ai_report(m_data, news)
                 
                 url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
-                payload = {'chat_id': CHAT_ID, 'text': report, 'parse_mode': 'Markdown'}
-                print("📤 發送 Markdown 報告...")
-                response = requests.post(url, data=payload)
                 
-                if response.status_code != 200:
-                    print(f"⚠️ Markdown 發送失敗 ({response.text})，改用純文字重發...")
-                    payload['parse_mode'] = ''
-                    requests.post(url, data=payload)
-                    print("✅ 純文字報告已補寄")
-                else:
-                    print("✅ 報告發送成功")
+                # 2. 迴圈發送給所有群組
+                for cid in chat_ids:
+                    print(f"📤 正在發送給群組 {cid} ...")
+                    payload = {'chat_id': cid, 'text': report, 'parse_mode': 'Markdown'}
+                    
+                    response = requests.post(url, data=payload)
+                    
+                    # 失敗自動降級機制
+                    if response.status_code != 200:
+                        print(f"⚠️ 群組 {cid} Markdown 發送失敗 ({response.text})，嘗試純文字...")
+                        payload['parse_mode'] = ''
+                        requests.post(url, data=payload)
+                    else:
+                        print(f"✅ 群組 {cid} 發送成功")
+                        
+                    time.sleep(1) # 休息一下，避免被 Telegram 視為垃圾訊息
+                    
             else:
                 print("⚠️ 數據抓取為空")
         except Exception as e:
