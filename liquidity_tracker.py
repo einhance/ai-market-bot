@@ -1,6 +1,9 @@
 import pandas_datareader.data as web
 import pandas as pd
 import datetime
+# --- [關鍵修改 1] 設定 Matplotlib 為非互動模式 (必須在 import pyplot 之前) ---
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import pandas.plotting as plotting
 
@@ -142,6 +145,7 @@ def save_liquidity_chart(df, filename="liquidity_table.png"):
     print(f"✅ 流動性表格已存為 {filename}")
     return filename
 
+# --- [關鍵修改 2] 確保只有直接執行此檔案時才跑這段 ---
 if __name__ == "__main__":
     df = get_liquidity_monitor()
     analyze_changes(df)
