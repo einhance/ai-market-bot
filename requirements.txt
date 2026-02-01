@@ -3,6 +3,8 @@ google-generativeai
 feedparser
 requests
 pandas
+pandas-datareader
 beautifulsoup4
 cloudscraper
 lxml
+numpy
