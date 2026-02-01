@@ -2,7 +2,7 @@ yfinance
 google-generativeai
 feedparser
 requests
-pandas
+pandas==1.5.3
 pandas-datareader
 beautifulsoup4
 cloudscraper
