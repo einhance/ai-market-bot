@@ -221,6 +221,25 @@ def run_module_and_capture_output(module_func):
     sys.stdout = old_stdout
     return result_buffer.getvalue()
 
+# 新增一個發送圖片的函數
+def send_telegram_photo(token, chat_id, file_path):
+    if not os.path.exists(file_path):
+        print(f"⚠️ 找不到圖片: {file_path}")
+        return
+    
+    url = f"https://api.telegram.org/bot{token}/sendPhoto"
+    with open(file_path, 'rb') as f:
+        payload = {'chat_id': chat_id}
+        files = {'photo': f}
+        try:
+            r = requests.post(url, data=payload, files=files)
+            if r.status_code == 200:
+                print(f"✅ 圖片 {file_path} 發送成功")
+            else:
+                print(f"❌ 圖片發送失敗: {r.text}")
+        except Exception as e:
+            print(f"❌ 發送錯誤: {e}")
+
 # --- 生成報告 ---
 def generate_ai_report(data, news_text, liquidity_text="N/A", sector_text="N/A"):
     print("🔍 查詢模型...")
@@ -338,43 +357,53 @@ if __name__ == "__main__":
             if m_data:
                 news = get_financial_news()
                 
-                # --- [NEW] Run Advanced Modules ---
+                # 初始化變數
                 liq_text = "數據無法取得"
                 sec_text = "數據無法取得"
+                liq_img = "liquidity_table.png" # 預設檔名
+                sec_img = "sector_table.png"    # 預設檔名
                 
                 if MODULES_AVAILABLE:
                     print("🚀 啟動進階分析模組...")
                     
-                    # 1. Run Liquidity
+                    # 1. Liquidity
                     def run_liq():
                         df = liquidity_tracker.get_liquidity_monitor()
                         liquidity_tracker.analyze_changes(df)
+                        # [新增] 存圖
+                        liquidity_tracker.save_liquidity_chart(df, liq_img) 
                     liq_text = run_module_and_capture_output(run_liq)
                     
-                    # 2. Run Sector Flow
+                    # 2. Sector Flow
                     def run_sec():
                         data = sector_flow.download_and_process_data()
                         ranks = sector_flow.calculate_rankings(data)
                         sector_flow.print_aligned_table(ranks)
+                        # [新增] 存圖
+                        sector_flow.save_sector_chart(ranks, sec_img)
                     sec_text = run_module_and_capture_output(run_sec)
 
-                # --- Pass ALL data to the report ---
-                # REMOVED the duplicate line here that was overwriting data
+                # 生成文字報告
                 report = generate_ai_report(m_data, news, liq_text, sec_text)
                 
+                # 發送循環
                 url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
-                
                 for cid in chat_ids:
                     print(f"📤 發送給 {cid}...")
+                    
+                    # 1. 先發送文字報告
                     payload = {'chat_id': cid, 'text': report, 'parse_mode': 'Markdown'}
-                    res = requests.post(url, data=payload)
-                    if res.status_code != 200:
-                        payload['parse_mode'] = ''
-                        requests.post(url, data=payload)
-                    time.sleep(1)
+                    requests.post(url, data=payload)
+                    
+                    # 2. 發送流動性圖片 (如果有產生)
+                    if MODULES_AVAILABLE:
+                        send_telegram_photo(TG_TOKEN, cid, liq_img)
+                        send_telegram_photo(TG_TOKEN, cid, sec_img)
+                        
+                    print("✅ 報告與圖片發送完成")
             else:
                 print("⚠️ 數據抓取為空")
         except Exception as e:
-            print(f"❌ 錯誤: {e}")
+            print(f"❌ 執行錯誤: {e}")
     else:
         print("⚠️ 缺少環境變數")
