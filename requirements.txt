@@ -9,3 +9,4 @@ cloudscraper
 lxml
 numpy<2
 matplotlib
+Pillow
