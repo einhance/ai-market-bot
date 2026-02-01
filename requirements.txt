@@ -8,3 +8,4 @@ beautifulsoup4
 cloudscraper
 lxml
 numpy<2
+matplotlib
