@@ -11,7 +11,6 @@ from bs4 import BeautifulSoup
 import cloudscraper
 import sys
 from io import StringIO
-from PIL import Image, ImageDraw, ImageFont  # [新增] 圖片處理模組
 
 # --- New Modules Import ---
 try:
@@ -222,79 +221,6 @@ def run_module_and_capture_output(module_func):
     sys.stdout = old_stdout
     return result_buffer.getvalue()
 
-# --- [新增] 文字轉圖片函數 ---
-def text_to_image(text, filename="output.png"):
-    """將文字字串轉換為黑底白字的圖片"""
-    if not text or len(text.strip()) == 0:
-        return False
-        
-    try:
-        # 嘗試加載等寬字體 (Linux/Mac 常見路徑)
-        # 如果找不到，會使用 PIL 預設字體 (比較醜但可用)
-        try:
-            # 優先嘗試 DejaVuSansMono (GitHub Actions 常見)
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 14)
-        except:
-            try:
-                # Mac 本地測試
-                font = ImageFont.truetype("Menlo.ttc", 14)
-            except:
-                # 最終 Fallback
-                font = ImageFont.load_default()
-
-        # 計算圖片大小
-        lines = text.split('\n')
-        max_width = 0
-        
-        # 簡單估算寬高 (可能不完美，但夠用)
-        # 建立一個暫存畫布來測量文字大小
-        temp_img = Image.new('RGB', (100, 100))
-        draw = ImageDraw.Draw(temp_img)
-        
-        # 找出最長的一行
-        left, top, right, bottom = draw.textbbox((0, 0), max(lines, key=len), font=font)
-        max_width = right - left + 40 # 加上邊距
-        
-        # 計算總高度
-        line_height = bottom - top + 4 # 行高 + 間距
-        total_height = len(lines) * line_height + 40 # 加上邊距
-        
-        # 建立正式圖片 (黑底)
-        img = Image.new('RGB', (max_width, total_height), color=(0, 0, 0)) # Black background
-        draw = ImageDraw.Draw(img)
-        
-        # 繪製文字 (白字)
-        y_text = 20
-        for line in lines:
-            draw.text((20, y_text), line, font=font, fill=(255, 255, 255)) # White text
-            y_text += line_height
-            
-        img.save(filename)
-        print(f"✅ 圖片已建立: {filename}")
-        return True
-    except Exception as e:
-        print(f"❌ 圖片轉換失敗: {e}")
-        return False
-
-# 新增一個發送圖片的函數
-def send_telegram_photo(token, chat_id, file_path):
-    if not os.path.exists(file_path):
-        print(f"⚠️ 找不到圖片: {file_path}")
-        return
-    
-    url = f"https://api.telegram.org/bot{token}/sendPhoto"
-    with open(file_path, 'rb') as f:
-        payload = {'chat_id': chat_id}
-        files = {'photo': f}
-        try:
-            r = requests.post(url, data=payload, files=files)
-            if r.status_code == 200:
-                print(f"✅ 圖片 {file_path} 發送成功")
-            else:
-                print(f"❌ 圖片發送失敗: {r.text}")
-        except Exception as e:
-            print(f"❌ 發送錯誤: {e}")
-
 # --- 生成報告 ---
 def generate_ai_report(data, news_text, liquidity_text="N/A", sector_text="N/A"):
     print("🔍 查詢模型...")
@@ -397,6 +323,24 @@ def generate_ai_report(data, news_text, liquidity_text="N/A", sector_text="N/A")
             
     return f"❌ 所有模型嘗試失敗。錯誤: {last_error}"
 
+def send_telegram_photo(token, chat_id, file_path):
+    if not os.path.exists(file_path):
+        print(f"⚠️ 找不到圖片: {file_path}")
+        return
+    
+    url = f"https://api.telegram.org/bot{token}/sendPhoto"
+    with open(file_path, 'rb') as f:
+        payload = {'chat_id': chat_id}
+        files = {'photo': f}
+        try:
+            r = requests.post(url, data=payload, files=files)
+            if r.status_code == 200:
+                print(f"✅ 圖片 {file_path} 發送成功")
+            else:
+                print(f"❌ 圖片發送失敗: {r.text}")
+        except Exception as e:
+            print(f"❌ 發送錯誤: {e}")
+
 # --- 主程式 ---
 if __name__ == "__main__":
     TG_TOKEN = os.environ.get('TELEGRAM_TOKEN')
@@ -412,7 +356,7 @@ if __name__ == "__main__":
             if m_data:
                 news = get_financial_news()
                 
-                # 初始化變數
+                # --- [NEW] Run Advanced Modules ---
                 liq_text = "數據無法取得"
                 sec_text = "數據無法取得"
                 liq_img = "liquidity_table.png" # 預設檔名
@@ -421,15 +365,15 @@ if __name__ == "__main__":
                 if MODULES_AVAILABLE:
                     print("🚀 啟動進階分析模組...")
                     
-                    # 1. Liquidity
+                    # 1. Run Liquidity
                     def run_liq():
                         df = liquidity_tracker.get_liquidity_monitor()
                         liquidity_tracker.analyze_changes(df)
                         # [新增] 存圖
-                        liquidity_tracker.save_liquidity_chart(df, liq_img) 
+                        liquidity_tracker.save_liquidity_chart(df, liq_img)
                     liq_text = run_module_and_capture_output(run_liq)
                     
-                    # 2. Sector Flow
+                    # 2. Run Sector Flow
                     def run_sec():
                         data = sector_flow.download_and_process_data()
                         ranks = sector_flow.calculate_rankings(data)
@@ -438,11 +382,12 @@ if __name__ == "__main__":
                         sector_flow.save_sector_chart(ranks, sec_img)
                     sec_text = run_module_and_capture_output(run_sec)
 
-                # 生成文字報告
+                # --- Pass ALL data to the report ---
+                # REMOVED the duplicate line here that was overwriting data
                 report = generate_ai_report(m_data, news, liq_text, sec_text)
                 
-                # 發送循環
                 url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
+                
                 for cid in chat_ids:
                     print(f"📤 發送給 {cid}...")
                     
@@ -459,6 +404,6 @@ if __name__ == "__main__":
             else:
                 print("⚠️ 數據抓取為空")
         except Exception as e:
-            print(f"❌ 執行錯誤: {e}")
+            print(f"❌ 錯誤: {e}")
     else:
         print("⚠️ 缺少環境變數")
