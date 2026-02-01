@@ -1,10 +1,6 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
-# --- [關鍵修改 1] 設定 Matplotlib 為非互動模式 ---
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 
 # ==========================================
 # 1. 設定：全球國家 ETF (New)
@@ -221,46 +217,7 @@ def print_aligned_table(final_output):
         print(row_str)
     print("="*80)
 
-# --- [關鍵修改 2] 接收 rankings 字典，並取出 5 日數據做圖 ---
-def save_sector_chart(rankings, filename="sector_table.png"):
-    if not rankings or 5 not in rankings: return None
-    
-    # 我們選擇 5 日 (1週) 的數據來做圖表，因為這最能反映即時資金流向
-    target_data = rankings[5]['sub'].head(15) # 取前 15 名細分產業
-    
-    # 轉換成 DataFrame 以便繪圖
-    df = pd.DataFrame({'RS_Score': target_data.values}, index=target_data.index)
-    df['Name'] = df.index.map(get_name)
-    
-    # 重新排列欄位
-    df = df[['Name', 'RS_Score']]
-    
-    # 格式化分數
-    df['RS_Score'] = df['RS_Score'].apply(lambda x: f"{x:+.2f}%")
-    
-    fig, ax = plt.subplots(figsize=(8, 6))
-    ax.axis('off')
-    ax.axis('tight')
-    
-    # 繪製表格
-    table = ax.table(cellText=df.values,
-                     colLabels=['細分產業', '5日相對強度 (RS)'],
-                     cellLoc='center',
-                     loc='center')
-    
-    table.auto_set_font_size(False)
-    table.set_fontsize(11)
-    table.scale(1.2, 1.5)
-    
-    plt.title("Sector RS Rankings (Top 15 Sub-Sectors - 5 Days)", fontweight="bold", pad=20)
-    plt.savefig(filename, bbox_inches='tight', dpi=150)
-    plt.close()
-    print(f"✅ 板塊表格已存為 {filename}")
-    return filename
-
-# --- [關鍵修改 3] 確保只有直接執行此檔案時才跑這段 ---
 if __name__ == "__main__":
     data = download_and_process_data()
     rankings = calculate_rankings(data)
     print_aligned_table(rankings)
-    # save_sector_chart(rankings) # 本地測試可以打開這行
