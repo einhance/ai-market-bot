@@ -1,6 +1,8 @@
 import pandas_datareader.data as web
 import pandas as pd
 import datetime
+import matplotlib.pyplot as plt
+import pandas.plotting as plotting
 
 def get_liquidity_monitor():
     # 設定時間範圍 (抓取過去 1 年以計算趨勢)
@@ -107,6 +109,38 @@ def analyze_changes(df):
     print("-" * 90)
     print("邏輯說明: 變化量 > 500億 (顯示為'強'或'險') 為趨勢明確訊號，請務必重視。")
     print("="*90)
+
+def save_liquidity_chart(df, filename="liquidity_table.png"):
+    if df is None: return None
+    
+    # 建立一個簡單的圖表來放表格
+    fig, ax = plt.subplots(figsize=(10, 4)) # 調整寬高
+    ax.axis('off') # 隱藏坐標軸
+    ax.axis('tight')
+    
+    # 整理要顯示的數據 (取最後一筆與變動量)
+    # 這裡為了簡單，我們直接畫出原始數據的最後幾行，或是您分析後的摘要
+    # 為了美觀，我們抓出最後 5 週的數據來畫
+    display_df = df.tail(5)[['Fed_Assets', 'TGA', 'RRP', 'Net_Liquidity']].sort_index(ascending=False)
+    # 格式化數字
+    display_df = display_df.applymap(lambda x: f"${x:,.1f}B")
+    
+    # 繪製表格
+    table = ax.table(cellText=display_df.values,
+                     colLabels=display_df.columns,
+                     rowLabels=display_df.index.strftime('%Y-%m-%d'),
+                     cellLoc='center',
+                     loc='center')
+    
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1.2, 1.2) # 調整表格大小
+    
+    plt.title("Fed Liquidity Monitor (Last 5 Weeks)", fontweight="bold")
+    plt.savefig(filename, bbox_inches='tight', dpi=150)
+    plt.close()
+    print(f"✅ 流動性表格已存為 {filename}")
+    return filename
 
 if __name__ == "__main__":
     df = get_liquidity_monitor()
