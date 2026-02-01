@@ -412,35 +412,27 @@ if __name__ == "__main__":
             if m_data:
                 news = get_financial_news()
                 
-                # 初始化文字變數
+                # 初始化變數
                 liq_text = "數據無法取得"
                 sec_text = "數據無法取得"
-                
-                # 初始化圖片檔名
-                liq_img_file = "liquidity_output.png"
-                sec_img_file = "sector_output.png"
                 
                 if MODULES_AVAILABLE:
                     print("🚀 啟動進階分析模組...")
                     
-                    # 1. 執行 Liquidity -> 抓文字 -> 轉圖片
+                    # 1. Liquidity (抓取純文字)
                     def run_liq():
                         df = liquidity_tracker.get_liquidity_monitor()
                         liquidity_tracker.analyze_changes(df)
                     liq_text = run_module_and_capture_output(run_liq)
-                    # 轉圖 (黑底白字)
-                    text_to_image(liq_text, liq_img_file)
                     
-                    # 2. 執行 Sector -> 抓文字 -> 轉圖片
+                    # 2. Sector Flow (抓取純文字)
                     def run_sec():
                         data = sector_flow.download_and_process_data()
                         ranks = sector_flow.calculate_rankings(data)
                         sector_flow.print_aligned_table(ranks)
                     sec_text = run_module_and_capture_output(run_sec)
-                    # 轉圖 (黑底白字)
-                    text_to_image(sec_text, sec_img_file)
 
-                # 生成 AI 文字報告
+                # 生成 AI 報告 (包含所有數據分析)
                 report = generate_ai_report(m_data, news, liq_text, sec_text)
                 
                 # 發送循環
@@ -448,17 +440,23 @@ if __name__ == "__main__":
                 for cid in chat_ids:
                     print(f"📤 發送給 {cid}...")
                     
-                    # 1. 發送 AI 文字報告
+                    # 1. 發送 AI 分析報告
                     payload = {'chat_id': cid, 'text': report, 'parse_mode': 'Markdown'}
                     requests.post(url, data=payload)
                     
-                    # 2. 發送 Liquidity 圖片 (如果存在)
+                    # 2. [額外] 發送原始數據表格 (作為備查，確保您看得到原始數據)
                     if MODULES_AVAILABLE:
-                        send_telegram_photo(TG_TOKEN, cid, liq_img_file)
-                        time.sleep(1) # 稍微間隔一下
-                        send_telegram_photo(TG_TOKEN, cid, sec_img_file)
+                        # 流動性數據
+                        raw_liq_msg = f"📊 **[原始數據] 宏觀流動性**\n```text\n{liq_text}\n```"
+                        payload_liq = {'chat_id': cid, 'text': raw_liq_msg, 'parse_mode': 'Markdown'}
+                        requests.post(url, data=payload_liq)
                         
-                    print("✅ 報告與圖片發送完成")
+                        # 板塊數據
+                        raw_sec_msg = f"📊 **[原始數據] 板塊資金流**\n```text\n{sec_text}\n```"
+                        payload_sec = {'chat_id': cid, 'text': raw_sec_msg, 'parse_mode': 'Markdown'}
+                        requests.post(url, data=payload_sec)
+                        
+                    print("✅ 報告與原始數據發送完成")
             else:
                 print("⚠️ 數據抓取為空")
         except Exception as e:
