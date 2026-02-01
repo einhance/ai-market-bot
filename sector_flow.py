@@ -1,6 +1,7 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 
 # ==========================================
 # 1. 設定：全球國家 ETF (New)
@@ -216,6 +217,32 @@ def print_aligned_table(final_output):
                 row_str += "".ljust(col_width)
         print(row_str)
     print("="*80)
+
+def save_sector_chart(df, filename="sector_table.png"):
+    if df.empty: return None
+    
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.axis('off')
+    ax.axis('tight')
+    
+    # 只取前 15 名顯示
+    display_df = df.head(15)
+    
+    # 繪製表格
+    table = ax.table(cellText=display_df.values,
+                     colLabels=display_df.columns,
+                     cellLoc='center',
+                     loc='center')
+    
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1.2, 1.2)
+    
+    plt.title("Sector Relative Strength Rankings", fontweight="bold")
+    plt.savefig(filename, bbox_inches='tight', dpi=150)
+    plt.close()
+    print(f"✅ 板塊表格已存為 {filename}")
+    return filename
 
 if __name__ == "__main__":
     data = download_and_process_data()
