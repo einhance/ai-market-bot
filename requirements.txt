@@ -7,4 +7,4 @@ pandas-datareader
 beautifulsoup4
 cloudscraper
 lxml
-numpy
+numpy<2
