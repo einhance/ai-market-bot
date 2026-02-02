@@ -11,6 +11,8 @@ from bs4 import BeautifulSoup
 import cloudscraper
 import sys
 from io import StringIO
+# Add this with your other imports
+from PIL import Image, ImageDraw, ImageFont
 
 # --- [NEW] Import Custom Modules ---
 try:
@@ -222,6 +224,43 @@ def run_module_and_capture_output(module_func):
     sys.stdout = old_stdout
     return result_buffer.getvalue()
 
+def text_to_image(text, filename="output.png"):
+    if not text: return None
+    
+    try:
+        # Try to load a monospace font (better for tables)
+        # On Linux/Mac, this path usually works. If not, it falls back to default.
+        try:
+            font = ImageFont.truetype("DejaVuSansMono.ttf", 14)
+        except:
+            font = ImageFont.load_default()
+
+        # Split text into lines to calculate image size
+        lines = text.split('\n')
+        max_width = max(len(line) for line in lines) * 10  # Approximate width
+        total_height = len(lines) * 20  # Approximate height per line
+        
+        # Create a black image
+        image = Image.new('RGB', (max_width + 40, total_height + 40), color=(0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        
+        # Draw text in white
+        draw.text((20, 20), text, font=font, fill=(255, 255, 255))
+        
+        # Save the file
+        image.save(filename)
+        return filename
+    except Exception as e:
+        print(f"Error creating image: {e}")
+        return None
+        
+def send_telegram_photo(token, chat_id, file_path):
+    url = f"https://api.telegram.org/bot{token}/sendPhoto"
+    with open(file_path, 'rb') as f:
+        payload = {'chat_id': chat_id}
+        files = {'photo': f}
+        requests.post(url, data=payload, files=files)
+
 # --- 生成報告 ---
 def generate_ai_report(data, news_text, liquidity_text="N/A", sector_text="N/A"):
     print("🔍 查詢模型...")
@@ -349,6 +388,10 @@ if __name__ == "__main__":
                         df = liquidity_tracker.get_liquidity_monitor()
                         liquidity_tracker.analyze_changes(df)
                     liq_text = run_module_and_capture_output(run_liq)
+
+                    # --- ADD THIS ---
+                    liq_image_file = text_to_image(liq_text, "liq_output.png")
+                    # ----------------
                     
                     # Sector Flow
                     def run_sec():
@@ -356,6 +399,10 @@ if __name__ == "__main__":
                         ranks = sector_flow.calculate_rankings(data)
                         sector_flow.print_aligned_table(ranks)
                     sec_text = run_module_and_capture_output(run_sec)
+
+                    # --- ADD THIS ---
+                    sec_image_file = text_to_image(sec_text, "sec_output.png")
+                    # ----------------
 
                 report = generate_ai_report(m_data, news, liq_text, sec_text)
                 url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
@@ -367,6 +414,18 @@ if __name__ == "__main__":
                     if res.status_code != 200:
                         payload['parse_mode'] = ''
                         requests.post(url, data=payload)
+
+                    # --- 2. ADD THIS: Send Images ---
+                    # (Add this block right here, before the sleep)
+                    if MODULES_AVAILABLE:
+                        # Send Liquidity Image if it exists
+                        if 'liq_image_file' in locals() and liq_image_file:
+                            send_telegram_photo(TG_TOKEN, cid, liq_image_file)
+                        
+                        # Send Sector Image if it exists
+                        if 'sec_image_file' in locals() and sec_image_file:
+                            send_telegram_photo(TG_TOKEN, cid, sec_image_file)
+                    # --------------------------------
                     time.sleep(1)
             else:
                 print("⚠️ 數據抓取為空")
