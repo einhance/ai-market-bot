@@ -231,7 +231,7 @@ def text_to_image(text, filename="output.png"):
         # Try to load a monospace font (better for tables)
         # On Linux/Mac, this path usually works. If not, it falls back to default.
         try:
-            font = ImageFont.truetype("DejaVuSansMono.ttf", 14)
+            font = ImageFont.truetype("NotoSansTC-Regular.ttf", 14)
         except:
             font = ImageFont.load_default()
 
