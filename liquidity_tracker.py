@@ -30,7 +30,7 @@ def get_liquidity_monitor():
         
         df = pd.DataFrame()
         df['Fed_Assets'] = data['WALCL'] / 1000 # 轉為 Billions
-        df['TGA'] = data['WTREGEN']             # 已經是 Billions
+        df['TGA'] = data['WTREGEN'] / 1000      # 轉為 Billions
         df['RRP'] = data['RRPONTSYD']           # 已經是 Billions
         
         # 4. 計算 Net Liquidity (淨流動性)
