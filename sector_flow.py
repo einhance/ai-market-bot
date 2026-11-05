@@ -28,7 +28,7 @@ COUNTRY_MAP = {
 # ==========================================
 SECTOR_MAP = {
     'XLE': {'name': '能源', 'subs': ['XOP', 'OIH', 'IEO', 'FCG', 'CRAK']},
-    'XLC': {'name': '通訊', 'subs': ['SOCL', 'VOX', 'PBS', 'NXTG']},
+    'XLC': {'name': '通訊', 'subs': ['SOCL', 'VOX', 'NXTG']},
     'XLU': {'name': '公用', 'subs': ['IDU', 'VPU', 'FUTY', 'JXI']},
     'XLI': {'name': '工業', 'subs': ['ITA', 'JETS', 'IYT', 'IYJ', 'PHO', 'XTN']},
     'XLP': {'name': '必消', 'subs': ['PBJ', 'KXI', 'IYK']}, 
@@ -51,7 +51,7 @@ SUB_NAME_MAP = {
     'GDX': '金礦', 'GDXJ': '小金礦', 'SIL': '白銀', 'LIT': '鋰電', 'URA': '鈾礦', 'MOO': '農業', 'COPX': '銅礦',
     'IDU': '公用', 'VPU': '公用指', 'FUTY': '公用指', 'JXI': '全球公用',
     'REZ': '住宅', 'REM': '抵押產', 'INDS': '工業產', 'PPTY': '地產',
-    'SOCL': '社群', 'PBS': '媒體', 'VOX': '通訊指', 'NXTG': '次代網'
+    'SOCL': '社群', 'VOX': '通訊指', 'NXTG': '次代網'
 }
 
 def get_name(ticker):
@@ -83,6 +83,22 @@ def download_and_process_data():
     except Exception as e:
         print(f"數據下載錯誤: {e}")
         return None
+
+    # 重試下載失敗的代號 (yfinance 多執行緒偶爾出現 'database is locked')
+    missing = [t for t in all_tickers if t not in data.columns or data[t].isna().all()]
+    if missing:
+        print(f"重試下載: {missing}")
+        try:
+            retry = yf.download(missing, period="2y", progress=False, auto_adjust=False, threads=False)
+            col = 'Adj Close' if 'Adj Close' in retry.columns.get_level_values(0) else 'Close'
+            retry = retry[col]
+            if isinstance(retry, pd.Series):
+                retry = retry.to_frame(missing[0])
+            for t in retry.columns:
+                if not retry[t].isna().all():
+                    data[t] = retry[t]
+        except Exception as e:
+            print(f"重試失敗: {e}")
 
     return data.sort_index()
 
