@@ -1,6 +1,26 @@
-import pandas_datareader.data as web
 import pandas as pd
 import datetime
+import requests
+from io import StringIO
+
+FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+
+def fetch_fred(series_ids, start_date, end_date):
+    """直接從 FRED 下載 CSV (取代已停止維護的 pandas_datareader)。"""
+    frames = []
+    for sid in series_ids:
+        params = {
+            "id": sid,
+            "cosd": start_date.strftime("%Y-%m-%d"),
+            "coed": end_date.strftime("%Y-%m-%d"),
+        }
+        r = requests.get(FRED_CSV_URL, params=params, timeout=30,
+                         headers={"User-Agent": "Mozilla/5.0 (ai-market-bot)"})
+        r.raise_for_status()
+        s = pd.read_csv(StringIO(r.text), index_col=0, parse_dates=True, na_values=".")
+        s.columns = [sid]
+        frames.append(s[sid].astype(float))
+    return pd.concat(frames, axis=1).sort_index()
 
 def get_liquidity_monitor():
     # 1. 設定時間範圍 (抓取過去 1 年以計算趨勢)
@@ -16,7 +36,7 @@ def get_liquidity_monitor():
         # RRPONTSYD: Overnight Reverse Repurchase Agreements (日資料)
         
         indicators = ['WALCL', 'WTREGEN', 'RRPONTSYD']
-        data = web.DataReader(indicators, 'fred', start_date, end_date)
+        data = fetch_fred(indicators, start_date, end_date)
         
         # 3. 數據清洗與對齊
         # 因為 WALCL 是週資料，其他是日資料，會有 NaN。

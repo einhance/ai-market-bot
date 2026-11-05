@@ -3,7 +3,6 @@ google-generativeai
 feedparser
 requests
 pandas==1.5.3
-pandas-datareader
 beautifulsoup4
 cloudscraper
 lxml

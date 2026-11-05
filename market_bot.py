@@ -15,13 +15,22 @@ from io import StringIO
 from PIL import Image, ImageDraw, ImageFont
 
 # --- [NEW] Import Custom Modules ---
+# 分開匯入：其中一個模組壞掉時，另一個仍可正常執行
 try:
     import liquidity_tracker
+    LIQ_AVAILABLE = True
+except Exception as e:
+    print(f"⚠️ liquidity_tracker 匯入失敗，流動性分析將略過: {e!r}")
+    LIQ_AVAILABLE = False
+
+try:
     import sector_flow
-    MODULES_AVAILABLE = True
-except ImportError:
-    print("⚠️ Warning: liquidity_tracker or sector_flow not found. Advanced analysis will be skipped.")
-    MODULES_AVAILABLE = False
+    SEC_AVAILABLE = True
+except Exception as e:
+    print(f"⚠️ sector_flow 匯入失敗，資金流向分析將略過: {e!r}")
+    SEC_AVAILABLE = False
+
+MODULES_AVAILABLE = LIQ_AVAILABLE or SEC_AVAILABLE
 
 # --- 設定 Gemini ---
 def configure_genai(api_key):
@@ -380,29 +389,27 @@ if __name__ == "__main__":
                 # [NEW] Advanced Modules Execution
                 liq_text = "數據無法取得"
                 sec_text = "數據無法取得"
-                
+                liq_image_file = None
+                sec_image_file = None
+
                 if MODULES_AVAILABLE:
                     print("🚀 啟動進階分析模組...")
-                    # Liquidity
+                if LIQ_AVAILABLE:
                     def run_liq():
                         df = liquidity_tracker.get_liquidity_monitor()
                         liquidity_tracker.analyze_changes(df)
                     liq_text = run_module_and_capture_output(run_liq)
-
-                    # --- ADD THIS ---
+                    print(liq_text)  # 同時顯示在 Actions log，方便除錯
                     liq_image_file = text_to_image(liq_text, "liq_output.png")
-                    # ----------------
-                    
-                    # Sector Flow
+
+                if SEC_AVAILABLE:
                     def run_sec():
                         data = sector_flow.download_and_process_data()
                         ranks = sector_flow.calculate_rankings(data)
                         sector_flow.print_aligned_table(ranks)
                     sec_text = run_module_and_capture_output(run_sec)
-
-                    # --- ADD THIS ---
+                    print(sec_text)
                     sec_image_file = text_to_image(sec_text, "sec_output.png")
-                    # ----------------
 
                 report = generate_ai_report(m_data, news, liq_text, sec_text)
                 url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
@@ -417,14 +424,10 @@ if __name__ == "__main__":
 
                     # --- 2. ADD THIS: Send Images ---
                     # (Add this block right here, before the sleep)
-                    if MODULES_AVAILABLE:
-                        # Send Liquidity Image if it exists
-                        if 'liq_image_file' in locals() and liq_image_file:
-                            send_telegram_photo(TG_TOKEN, cid, liq_image_file)
-                        
-                        # Send Sector Image if it exists
-                        if 'sec_image_file' in locals() and sec_image_file:
-                            send_telegram_photo(TG_TOKEN, cid, sec_image_file)
+                    if liq_image_file:
+                        send_telegram_photo(TG_TOKEN, cid, liq_image_file)
+                    if sec_image_file:
+                        send_telegram_photo(TG_TOKEN, cid, sec_image_file)
                     # --------------------------------
                     time.sleep(1)
             else:
