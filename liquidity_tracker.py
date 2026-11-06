@@ -63,6 +63,36 @@ def get_liquidity_monitor():
         print(f"數據抓取失敗: {e}")
         return None
 
+def liquidity_signal(df):
+    """以 4 週趨勢為主、1 週變化為確認的流動性訊號。回傳 dict 供燈號模型使用。"""
+    if df is None or len(df) < 2:
+        return None
+    cur = df.iloc[-1]
+    p1 = df.iloc[-6] if len(df) >= 6 else df.iloc[0]
+    p4 = df.iloc[-21] if len(df) >= 21 else df.iloc[0]
+    chg_1w = cur['Net_Liquidity'] - p1['Net_Liquidity']
+    chg_4w = cur['Net_Liquidity'] - p4['Net_Liquidity']
+    # 排除 TGA 的流動性 (Fed 資產 - RRP)：TGA 受稅季/發債影響大，單獨拆開看
+    ex_tga_4w = (cur['Fed_Assets'] - cur['RRP']) - (p4['Fed_Assets'] - p4['RRP'])
+    tga_effect_4w = -(cur['TGA'] - p4['TGA'])   # TGA 下降 = 釋出流動性 (正值)
+
+    # 4 週趨勢評分 (-2 ~ +2)
+    if chg_4w > 50: score = 2
+    elif chg_4w > 20: score = 1
+    elif chg_4w < -50: score = -2
+    elif chg_4w < -20: score = -1
+    else: score = 0
+    # 1 週方向相反且幅度 > 200 億 → 訊號往中性靠一級
+    if score > 0 and chg_1w < -20: score -= 1
+    if score < 0 and chg_1w > 20: score += 1
+    # 4 週持平但 1 週明顯變化 → 僅給半級提示 (不改分數)，由文字標示
+    labels = {2: "🟢 強力寬鬆", 1: "🟢 寬鬆", 0: "🟡 中性", -1: "🔴 緊縮", -2: "🔴 強力緊縮"}
+    return {
+        'level': cur['Net_Liquidity'], 'chg_1w': chg_1w, 'chg_4w': chg_4w,
+        'ex_tga_4w': ex_tga_4w, 'tga_effect_4w': tga_effect_4w,
+        'score': score, 'label': labels[score],
+    }
+
 def analyze_changes(df):
     if df is None: return
 
@@ -94,7 +124,6 @@ def analyze_changes(df):
     print(f"{'指標名稱':<22} {'目前水位':<12} {'1週變化 (關鍵訊號)':<25} {'1月變化':<15}")
     print("-" * 90)
     
-    overall_status = "🟡 中性觀察" # 預設狀態
 
     for key, info in metrics.items():
         val_now = current[key]
@@ -126,21 +155,19 @@ def analyze_changes(df):
             else:
                 signal_str = "🔴緊縮"
 
-        # 如果是 Net Liquidity，這個訊號決定整體市場氣氛
-        if key == 'Net_Liquidity':
-            if "中性" in signal_str: overall_status = "🟡 中性 (盤整/個股表現)"
-            elif "🟢" in signal_str: overall_status = "🟢 綠燈 (適合做多)"
-            elif "🔴" in signal_str: overall_status = "🔴 紅燈 (風險趨避)"
-            
         # 格式化輸出
         print(f"{info['name']:<22} ${val_now:,.0f}B      {change_1w:+,.0f}B {signal_str:<15}   {change_4w:+,.0f}B")
 
+    sig = liquidity_signal(df)
     print("-" * 90)
-    print(f"【綜合操作建議】: {overall_status}")
+    print(f"【流動性訊號 (4週趨勢為主)】: {sig['label']}")
+    print(f"  淨流動性 4週 {sig['chg_4w']:+,.0f}B / 1週 {sig['chg_1w']:+,.0f}B")
+    print(f"  拆解 4週: TGA 貢獻 {sig['tga_effect_4w']:+,.0f}B, 排除TGA (Fed資產-RRP) {sig['ex_tga_4w']:+,.0f}B")
     print("-" * 90)
     print("邏輯說明:")
-    print("1. 變化量 < 200億: 視為市場雜訊，訊號為中性。")
-    print("2. 變化量 > 500億: 視為強力訊號，趨勢明確。")
+    print("1. 單項變化量 < 200億: 視為雜訊；> 500億: 強力訊號。")
+    print("2. 綜合訊號以淨流動性 4 週變化為主，1 週反向變化會將訊號降一級。")
+    print("3. TGA 受稅季與發債影響，短期波動大，已單獨拆解。")
     print("="*90)
 
 if __name__ == "__main__":
