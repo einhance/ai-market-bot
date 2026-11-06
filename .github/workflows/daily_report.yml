@@ -2,9 +2,10 @@ name: Daily Market Analysis
 
 on:
   schedule:
-    # 設定時間：UTC 21:15
-    # 冬令時間 (PST): 溫哥華下午 1:15 (美股收盤後 15 分鐘)
-    # 夏令時間 (PDT): 溫哥華下午 2:15 (美股收盤後 1 小時 15 分鐘)
+    # 設定時間：UTC 13:15 (美股開盤前，報告使用前一交易日收盤數據)
+    # 冬令時間 (PST): 溫哥華清晨 5:15
+    # 夏令時間 (PDT): 溫哥華清晨 6:15
+    # 註：GitHub 排程常延遲數十分鐘以上
     - cron: '15 13 * * *' 
   workflow_dispatch: # 允許手動測試
 
@@ -13,10 +14,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
@@ -28,4 +29,4 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-        run: python market_bot.py
+        run: python -u market_bot.py

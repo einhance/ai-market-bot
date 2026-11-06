@@ -32,6 +32,8 @@ except Exception as e:
 
 MODULES_AVAILABLE = LIQ_AVAILABLE or SEC_AVAILABLE
 
+import regime
+
 # --- 設定 Gemini ---
 def configure_genai(api_key):
     try:
@@ -40,33 +42,46 @@ def configure_genai(api_key):
         print(f"⚠️ Gemini 設定失敗: {e}")
 
 # --- 抓新聞 ---
-def get_financial_news():
+NEWS_FAILED = "⚠️ 新聞抓取失敗 (所有來源皆無回應)"
+
+def get_financial_news(max_items=10):
+    # 2026-11: Google News topic 連結回傳 400、Yahoo rssindex 回傳 404，改用以下來源
     rss_sources = [
-        "https://news.google.com/rss/topics/CAAqJggBCiCPASowCAqXAg8KCOgDPQkKBAgCGAISBAgBEgISBAgQEgIIABIECAESBAgBEg?hl=en-US&gl=US&ceid=US:en",
-        "https://finance.yahoo.com/news/rssindex"
+        ("Google News", "https://news.google.com/rss/search?q=stock+market+when:1d&hl=en-US&gl=US&ceid=US:en"),
+        ("CNBC", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114"),
+        ("MarketWatch", "https://feeds.content.dowjones.io/public/rss/mw_topstories"),
+        ("Investing.com", "https://www.investing.com/rss/news_25.rss"),
     ]
-    scraper = cloudscraper.create_scraper()
-    try:
-        for url in rss_sources:
-            print(f"📰 抓取新聞: {url} ...")
-            response = scraper.get(url, timeout=10)
-            feed = feedparser.parse(response.content)
-            if feed.entries:
-                print(f"✅ 成功抓到 {len(feed.entries)} 則新聞")
-                news_items = []
-                for entry in feed.entries[:8]:
-                    title = entry.title
-                    raw_summary = getattr(entry, 'summary', '') or getattr(entry, 'description', '')
-                    clean_summary = ""
-                    if raw_summary:
-                        soup = BeautifulSoup(raw_summary, "html.parser")
-                        clean_summary = soup.get_text(separator=' ', strip=True)[:200]
-                    news_items.append(f"Title: {title}\nSummary: {clean_summary}\n")
-                return "\n-----------------\n".join(news_items)
-        return "⚠️ 今日無重大頭條"
-    except Exception as e:
-        print(f"❌ 新聞抓取失敗: {e}")
-        return "新聞抓取失敗"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                             "(KHTML, like Gecko) Chrome/130 Safari/537.36"}
+    per_source = 3
+    news_items, seen = [], set()
+    for src, url in rss_sources:
+        try:
+            print(f"📰 抓取新聞: {src} ...")
+            r = requests.get(url, headers=headers, timeout=15)
+            feed = feedparser.parse(r.content)
+            if r.status_code != 200 or not feed.entries:
+                print(f"⚠️ {src} 無資料 (HTTP {r.status_code})")
+                continue
+            count = 0
+            for entry in feed.entries:
+                title = entry.title.strip()
+                key = title.lower()[:60]
+                if key in seen: continue
+                seen.add(key)
+                raw = getattr(entry, 'summary', '') or getattr(entry, 'description', '')
+                summary = BeautifulSoup(raw, "html.parser").get_text(" ", strip=True)[:200] if raw else ""
+                news_items.append(f"[{src}] Title: {title}\nSummary: {summary}\n")
+                count += 1
+                if count >= per_source: break
+            print(f"✅ {src}: {count} 則")
+        except Exception as e:
+            print(f"❌ {src} 失敗: {e}")
+        if len(news_items) >= max_items: break
+    if not news_items:
+        return NEWS_FAILED
+    return "\n-----------------\n".join(news_items[:max_items])
 
 # --- 【HTML 結構解析 + Spread 計算版】抓 AAII ---
 def get_aaii_sentiment():
@@ -152,7 +167,7 @@ def get_market_data():
     tickers = ['^VIX', 'SPY', 'RSP', 'QQQ', 'IWM', '^TNX', '^IRX', 'SOXX'] 
     print("📥 下載市場數據...")
     try:
-        df = yf.download(tickers, period='40d', progress=False, actions=False)['Close']
+        df = yf.download(tickers, period='60d', progress=False, auto_adjust=True)['Close']
         if df.empty: raise Exception("數據表為空")
         df = df.ffill()
         latest = df.iloc[-1]
@@ -201,16 +216,34 @@ def get_market_data():
         breadth_ratio = latest['RSP'] / latest['SPY'] if latest['SPY'] else 0
         data_date = latest.name.date()
 
+        # 資料品質檢查：ETF 單日變動 > ±15% 視為分割/資料錯誤，不送進報告
+        data_warnings = []
+        changes = {}
+        for t, key in [('SPY', 'spy_chg'), ('QQQ', 'qqq_chg'), ('SOXX', 'soxx_chg')]:
+            c = calc_change(latest[t], prev[t])
+            if abs(c) > 15:
+                data_warnings.append(f"{t} 單日 {c:+.1f}% 疑似資料錯誤，已排除")
+                c = None
+            changes[key] = c
+        for w in data_warnings: print(f"⚠️ {w}")
+
+        # 廣度改看 RSP/SPY 比值的 20 日變化 (比值本身長期會漂移，固定門檻無意義)
+        ratio = (df_calc['RSP'] / df_calc['SPY']).dropna()
+        breadth_chg_20d = (ratio.iloc[-1] / ratio.iloc[-21] - 1) * 100 if len(ratio) > 21 else None
+
         return {
             'date': data_date,
             'vix': latest['^VIX'],
             'tnx': latest['^TNX'],
             'fed_rate': latest['^IRX'],
             'spy': latest['SPY'],
-            'spy_chg': calc_change(latest['SPY'], prev['SPY']),
-            'qqq_chg': calc_change(latest['QQQ'], prev['QQQ']),
-            'soxx_chg': calc_change(latest['SOXX'], prev['SOXX']),
+            **changes,
             'breadth': breadth_ratio,
+            'breadth_chg_20d': breadth_chg_20d,
+            'bias': bias,
+            'rsi': current_rsi,
+            'cnn_score': cnn_score,
+            'data_warnings': data_warnings,
             'aaii_display': aaii_display,
             'aaii_src': aaii_source,
             'cnn_display': cnn_display,
@@ -270,8 +303,11 @@ def send_telegram_photo(token, chat_id, file_path):
         files = {'photo': f}
         requests.post(url, data=payload, files=files)
 
+def _fmt(v, f):
+    return f.format(v) if v is not None else '無資料'
+
 # --- 生成報告 ---
-def generate_ai_report(data, news_text, liquidity_text="N/A", sector_text="N/A"):
+def generate_ai_report(data, news_text, liquidity_text="N/A", sector_text="N/A", regime_text="N/A", regime=None):
     print("🔍 查詢模型...")
     all_models = []
     try:
@@ -302,8 +338,13 @@ def generate_ai_report(data, news_text, liquidity_text="N/A", sector_text="N/A")
     - CNN 恐懼貪婪: {data['cnn_display']} (來源: {data['cnn_src']})
       (參考: <25 極度恐懼, >75 極度貪婪)
     - VIX 恐慌指數: {data['vix']:.2f}
-    - 市場廣度 (RSP/SPY): {data['breadth']:.4f} (低於 0.29 代表極度集中)
-    - Fed Rate (基準利率): {data['fed_rate']:.2f}% (使用13週公債代替)
+    - 市場廣度 (RSP/SPY 20日變化): {_fmt(data.get('breadth_chg_20d'), '{:+.2f}%')} (正值=資金擴散到中小型/等權股，負值=集中在權值股)
+    - 短期利率 (13週國庫券 ^IRX，近似聯邦基金利率): {data['fed_rate']:.2f}%
+    - SPY 單日 {_fmt(data.get('spy_chg'), '{:+.2f}%')}、QQQ 單日 {_fmt(data.get('qqq_chg'), '{:+.2f}%')}、SOXX 單日 {_fmt(data.get('soxx_chg'), '{:+.2f}%')}
+    - 資料警示: {'; '.join(data.get('data_warnings') or []) or '無'}
+
+    【量化燈號模型 (已由程式計算，不可更改)】
+    {regime_text}
 
     【宏觀流動性數據 (New)】
     {liquidity_text}
@@ -313,6 +354,7 @@ def generate_ai_report(data, news_text, liquidity_text="N/A", sector_text="N/A")
 
     【新聞頭條】
     {news_text}
+    (若上方顯示「新聞抓取失敗」，第 4 節請直接寫「今日新聞來源無法取得」，不要寫成「無重大新聞」，也不要自行編造新聞)
 
     【報告輸出格式】
     請嚴格遵守以下 Markdown 格式（包含表格）：
@@ -327,17 +369,18 @@ def generate_ai_report(data, news_text, liquidity_text="N/A", sector_text="N/A")
     AAII 散戶情緒   {data['aaii_display']}       (請判斷)          (一句話解讀)
     VIX 恐慌指數    {data['vix']:.2f}              (請判斷)          (一句話解讀)
     CNN 恐懼貪婪    {data['cnn_display']}              (請判斷)          (一句話解讀)
-    市場廣度        {data['breadth']:.3f}              (請判斷)          (一句話解讀)
-    Fed Rate (利率) {data['fed_rate']:.2f}%              (請判斷)          (一句話解讀)
+    市場廣度(20日)  {_fmt(data.get('breadth_chg_20d'), '{:+.2f}%')}              (請判斷)          (一句話解讀)
+    短期利率(13週)  {data['fed_rate']:.2f}%              (請判斷)          (一句話解讀)
     ```
 
     ## 2. 💧 宏觀流動性分析 (新增)
-    * **水位狀態**: (參考【宏觀流動性數據】，判斷是寬鬆還是緊縮)
-    * **關鍵變化**: (簡述 Net Liquidity 和 TGA 的變化)
+    * **水位狀態**: (以【宏觀流動性數據】中的「流動性訊號 (4週趨勢為主)」為準)
+    * **關鍵變化**: (說明 4 週與 1 週淨流動性變化，並指出有多少來自 TGA 的短期波動)
 
     ## 3. 🌍 資金流向與熱點 (新增)
     * **全球資金**: (參考【板塊資金流向數據】，錢流向哪個國家？)
     * **強勢板塊**: (列出領漲的美股板塊與細分產業)
+    * **風險偏好**: (根據「進攻 vs 防禦」數值，說明資金是追逐成長還是躲進防禦板塊)
 
     ## 4. 📰 當日重大財經新聞
     (歸納 3 點最重要的市場驅動新聞)
@@ -345,13 +388,13 @@ def generate_ai_report(data, news_text, liquidity_text="N/A", sector_text="N/A")
     * **[標題]**: ...
     * **[標題]**: ...
 
-    ## 5. 🚦 綜合投資策略：(請填入 🟢/🟡/🔴) 燈
-    (綜合上述「情緒、流動性、資金流」給出燈號)
+    ## 5. 🚦 綜合投資策略：{regime['light'] if regime else '🟡'} {regime['label'] if regime else '黃燈'}
+    (燈號已由【量化燈號模型】決定，**你不可更改燈號**。請先原樣貼出量化燈號模型的分數表 (放在 ```text code block 內)，再用 2-3 句解釋主要是哪些因子造成這個燈號；若情緒註記為極端，說明其逆向意義但不可據此改變燈號)
 
     **核心觀點**: (一句話總結)
 
     **操作建議**:
-    1.  **資金控管**: (參考流動性水位建議)
+    1.  **資金控管**: (依燈號與流動性訊號建議持股水位)
     2.  **關注機會**: (參考資金流向建議強勢股)
     3.  **避險策略**: ...
 
@@ -373,66 +416,90 @@ def generate_ai_report(data, news_text, liquidity_text="N/A", sector_text="N/A")
     return f"❌ 所有模型嘗試失敗。錯誤: {last_error}"
 
 # --- 主程式 ---
+def build_report():
+    """抓資料、跑模組、算燈號、產生報告。回傳 (report, image_files)。"""
+    m_data = get_market_data()
+    if not m_data:
+        print("⚠️ 數據抓取為空")
+        return None, []
+
+    news = get_financial_news()
+    liq_text = sec_text = "數據無法取得"
+    liq_sig = risk_app = None
+    images = []
+
+    if MODULES_AVAILABLE:
+        print("🚀 啟動進階分析模組...")
+    if LIQ_AVAILABLE:
+        holder = {}
+        def run_liq():
+            holder['df'] = liquidity_tracker.get_liquidity_monitor()
+            liquidity_tracker.analyze_changes(holder['df'])
+        liq_text = run_module_and_capture_output(run_liq)
+        print(liq_text)  # 同時顯示在 Actions log，方便除錯
+        try:
+            liq_sig = liquidity_tracker.liquidity_signal(holder.get('df'))
+        except Exception as e:
+            print(f"⚠️ 流動性訊號計算失敗: {e}")
+        img = text_to_image(liq_text, "liq_output.png")
+        if img: images.append(img)
+
+    if SEC_AVAILABLE:
+        holder = {}
+        def run_sec():
+            data = sector_flow.download_and_process_data()
+            holder['ranks'] = sector_flow.calculate_rankings(data)
+            sector_flow.print_aligned_table(holder['ranks'])
+        sec_text = run_module_and_capture_output(run_sec)
+        print(sec_text)
+        try:
+            risk_app = sector_flow.risk_appetite(holder.get('ranks'), 20)
+        except Exception as e:
+            print(f"⚠️ 風險偏好計算失敗: {e}")
+        img = text_to_image(sec_text, "sec_output.png")
+        if img: images.append(img)
+
+    reg = regime.compute_regime(m_data, liq_sig, risk_app)
+    regime_text = regime.format_regime(reg)
+    print(regime_text)
+
+    report = generate_ai_report(m_data, news, liq_text, sec_text, regime_text, reg)
+    return report, images
+
+
 if __name__ == "__main__":
     TG_TOKEN = os.environ.get('TELEGRAM_TOKEN')
     CHAT_ID_ENV = os.environ.get('CHAT_ID')
     API_KEY = os.environ.get('GEMINI_API_KEY')
-    
-    if TG_TOKEN and CHAT_ID_ENV and API_KEY:
-        try:
-            chat_ids = [cid.strip() for cid in CHAT_ID_ENV.split(',') if cid.strip()]
-            configure_genai(API_KEY)
-            m_data = get_market_data()
-            
-            if m_data:
-                news = get_financial_news()
-                # [NEW] Advanced Modules Execution
-                liq_text = "數據無法取得"
-                sec_text = "數據無法取得"
-                liq_image_file = None
-                sec_image_file = None
+    DRY_RUN = os.environ.get('DRY_RUN', '').lower() in ('1', 'true', 'yes')
 
-                if MODULES_AVAILABLE:
-                    print("🚀 啟動進階分析模組...")
-                if LIQ_AVAILABLE:
-                    def run_liq():
-                        df = liquidity_tracker.get_liquidity_monitor()
-                        liquidity_tracker.analyze_changes(df)
-                    liq_text = run_module_and_capture_output(run_liq)
-                    print(liq_text)  # 同時顯示在 Actions log，方便除錯
-                    liq_image_file = text_to_image(liq_text, "liq_output.png")
-
-                if SEC_AVAILABLE:
-                    def run_sec():
-                        data = sector_flow.download_and_process_data()
-                        ranks = sector_flow.calculate_rankings(data)
-                        sector_flow.print_aligned_table(ranks)
-                    sec_text = run_module_and_capture_output(run_sec)
-                    print(sec_text)
-                    sec_image_file = text_to_image(sec_text, "sec_output.png")
-
-                report = generate_ai_report(m_data, news, liq_text, sec_text)
-                url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
-                
-                for cid in chat_ids:
-                    print(f"📤 發送給 {cid}...")
-                    payload = {'chat_id': cid, 'text': report, 'parse_mode': 'Markdown'}
-                    res = requests.post(url, data=payload)
-                    if res.status_code != 200:
-                        payload['parse_mode'] = ''
-                        requests.post(url, data=payload)
-
-                    # --- 2. ADD THIS: Send Images ---
-                    # (Add this block right here, before the sleep)
-                    if liq_image_file:
-                        send_telegram_photo(TG_TOKEN, cid, liq_image_file)
-                    if sec_image_file:
-                        send_telegram_photo(TG_TOKEN, cid, sec_image_file)
-                    # --------------------------------
-                    time.sleep(1)
-            else:
-                print("⚠️ 數據抓取為空")
-        except Exception as e:
-            print(f"❌ 錯誤: {e}")
-    else:
+    if not API_KEY or (not DRY_RUN and not (TG_TOKEN and CHAT_ID_ENV)):
         print("⚠️ 缺少環境變數")
+        sys.exit(1)
+
+    try:
+        configure_genai(API_KEY)
+        report, images = build_report()
+        if not report:
+            sys.exit(1)
+
+        if DRY_RUN:
+            print("===== DRY RUN：以下報告不會發送到 Telegram =====")
+            print(report)
+            sys.exit(0)
+
+        chat_ids = [cid.strip() for cid in CHAT_ID_ENV.split(',') if cid.strip()]
+        url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
+        for cid in chat_ids:
+            print(f"📤 發送給 {cid}...")
+            payload = {'chat_id': cid, 'text': report, 'parse_mode': 'Markdown'}
+            res = requests.post(url, data=payload)
+            if res.status_code != 200:
+                payload['parse_mode'] = ''
+                requests.post(url, data=payload)
+            for img in images:
+                send_telegram_photo(TG_TOKEN, cid, img)
+            time.sleep(1)
+    except Exception as e:
+        print(f"❌ 錯誤: {e}")
+        sys.exit(1)

@@ -1,0 +1,23 @@
+name: Dry run (no Telegram)
+
+# 每次推送到 main 以外的分支時自動執行：產生完整報告並印在 log，但不發送 Telegram。
+# 用來在合併 Pull Request 前檢查改動是否正常。
+on:
+  push:
+    branches-ignore: [main]
+  workflow_dispatch:
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: Generate report (not sent)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DRY_RUN: '1'
+        run: python -u market_bot.py

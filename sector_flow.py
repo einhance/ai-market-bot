@@ -43,13 +43,13 @@ SECTOR_MAP = {
 SUB_NAME_MAP = {
     'SMH': '半導體', 'IGV': '軟體', 'CIBR': '資安', 'SKYY': '雲端', 'AIQ': '人工智慧', 'SOXX': '費半', 'FTEC': '科技指',
     'KRE': '區域銀', 'KBE': '銀行', 'IAI': '經紀商', 'IYF': '金融', 'FNCL': '金融科', 'KBWB': '大型銀',
-    'XBI': '生技', 'IBB': '生技指', 'IHI': '醫材', 'IHE': '製藥', 'PJP': '製藥', 'FBT': '生技',
+    'XBI': '生技XBI', 'IBB': '生技指', 'IHI': '醫材', 'IHE': '製藥IHE', 'PJP': '製藥PJP', 'FBT': '生技FBT',
     'XRT': '零售', 'XHB': '營建', 'PEJ': '休閒', 'BETZ': '博弈', 'ITB': '營建指', 'CHIQ': '非消指',
     'PBJ': '食品', 'KXI': '必需', 'IYK': '必需指',
     'XOP': '油氣探', 'OIH': '油氣服', 'CRAK': '煉油', 'FCG': '天然氣', 'IEO': '能源指',
     'ITA': '航太', 'JETS': '航空', 'IYT': '運輸', 'IYJ': '工業指', 'PHO': '水資源', 'XTN': '運輸指',
     'GDX': '金礦', 'GDXJ': '小金礦', 'SIL': '白銀', 'LIT': '鋰電', 'URA': '鈾礦', 'MOO': '農業', 'COPX': '銅礦',
-    'IDU': '公用', 'VPU': '公用指', 'FUTY': '公用指', 'JXI': '全球公用',
+    'IDU': '公用', 'VPU': '公用VPU', 'FUTY': '公用FUTY', 'JXI': '全球公用',
     'REZ': '住宅', 'REM': '抵押產', 'INDS': '工業產', 'PPTY': '地產',
     'SOCL': '社群', 'VOX': '通訊指', 'NXTG': '次代網'
 }
@@ -100,7 +100,16 @@ def download_and_process_data():
         except Exception as e:
             print(f"重試失敗: {e}")
 
-    return data.sort_index()
+    data = data.sort_index()
+
+    # 資料品質檢查：ETF 單日漲跌超過 ±20% 幾乎都是分割/資料錯誤，排除該代號
+    # 只檢查計算 200 日 RS 會用到的區間
+    daily = data.tail(205).pct_change(fill_method=None)
+    bad = [t for t in daily.columns if (daily[t].abs() > 0.20).any()]
+    if bad:
+        print(f"⚠️ 資料異常 (單日變動 >20%，疑似分割或錯誤)，已排除: {bad}")
+        data = data.drop(columns=bad)
+    return data
 
 def calculate_rankings(data):
     if data is None: return None
@@ -147,6 +156,27 @@ def calculate_rankings(data):
         }
         
     return final_output
+
+# 進攻型 vs 防禦型板塊
+OFFENSE = ['XLK', 'XLY', 'XLC']
+DEFENSE = ['XLP', 'XLV', 'XLU']
+
+def risk_appetite(final_output, days=20):
+    """進攻板塊平均 RS - 防禦板塊平均 RS。正值 = 風險偏好，負值 = 避險。"""
+    if not final_output or days not in final_output:
+        return None
+    major = final_output[days]['major']
+    off = [major[t] for t in OFFENSE if t in major.index]
+    dfn = [major[t] for t in DEFENSE if t in major.index]
+    if not off or not dfn:
+        return None
+    spread = sum(off) / len(off) - sum(dfn) / len(dfn)
+    if spread > 8: score = 2
+    elif spread > 3: score = 1
+    elif spread < -8: score = -2
+    elif spread < -3: score = -1
+    else: score = 0
+    return {'spread': spread, 'score': score, 'days': days}
 
 def print_aligned_table(final_output):
     if not final_output: return
@@ -231,6 +261,12 @@ def print_aligned_table(final_output):
             else:
                 row_str += "".ljust(col_width)
         print(row_str)
+    print("="*80)
+    for d in (5, 20):
+        ra = risk_appetite(final_output, d)
+        if ra:
+            tag = "風險偏好" if ra['spread'] > 0 else "避險"
+            print(f"⚖️ 進攻(科技/非必消/通訊) vs 防禦(必消/醫療/公用) {d}日: {ra['spread']:+.1f}% → {tag}")
     print("="*80)
 
 if __name__ == "__main__":
