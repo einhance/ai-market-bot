@@ -100,7 +100,8 @@ def download_and_process_data():
         except Exception as e:
             print(f"重試失敗: {e}")
 
-    data = data.sort_index()
+    # 個別 ETF 偶爾缺最新一筆報價：最多往前補 3 天，避免出現 nan
+    data = data.sort_index().ffill(limit=3)
 
     # 資料品質檢查：ETF 單日漲跌超過 ±20% 幾乎都是分割/資料錯誤，排除該代號
     # 只檢查計算 200 日 RS 會用到的區間
@@ -126,7 +127,7 @@ def calculate_rankings(data):
         spy_ret = pct_change['SPY']
         
         # RS = Ticker% - SPY%
-        rs_series = (pct_change - spy_ret) * 100
+        rs_series = ((pct_change - spy_ret) * 100).dropna()
         
         # --- 1. 全球國家排名 (Country) ---
         country_tickers = list(COUNTRY_MAP.keys())
